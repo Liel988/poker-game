@@ -1,0 +1,199 @@
+.table-wrapper {
+    text-align: center;
+    padding: 2rem;
+    font-family: 'Segoe UI', sans-serif;
+  }
+  
+  .table-title {
+    margin-bottom: 1.5rem;
+    color: #333;
+  }
+  
+  .poker-table {
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, #006400, #013220);
+    border-radius: 50%;
+    margin: 0 auto;
+    position: relative;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
+  }
+  
+  .player-seat {
+    position: absolute;
+    width: 100px;
+    height: 80px;
+    text-align: center;
+    color: #fff;
+    font-weight: bold;
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 6px;
+    border-radius: 10px;
+  }
+  
+  .avatar {
+    font-size: 24px;
+  }
+  
+  .player-name {
+    margin-top: 4px;
+    font-size: 14px;
+  }
+  
+  .player-chips {
+    font-size: 12px;
+    margin-top: 4px;
+    color: #ffd700;
+  }
+  
+  .status {
+    font-size: 13px;
+    color: red;
+    font-weight: bold;
+  }
+  
+  .folded-seat {
+    opacity: 0.4;
+  }
+  
+  .active-seat {
+    border: 2px solid gold;
+    box-shadow: 0 0 10px gold;
+  }
+  
+  .turn-indicator {
+    font-size: 18px;
+    margin-top: 4px;
+    color: gold;
+  }
+  
+  .seat-0 { top: 5%; left: 50%; transform: translate(-50%, -50%); }
+  .seat-1 { top: 22%; left: 85%; transform: translate(-50%, -50%); }
+  .seat-2 { top: 78%; left: 85%; transform: translate(-50%, -50%); }
+  .seat-3 { top: 95%; left: 50%; transform: translate(-50%, -50%); }
+  .seat-4 { top: 78%; left: 15%; transform: translate(-50%, -50%); }
+  .seat-5 { top: 22%; left: 15%; transform: translate(-50%, -50%); }
+  
+  .community-cards {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    gap: 10px;
+    transform: translate(-50%, -50%);
+  }
+  
+  .card {
+    width: 50px;
+    height: 70px;
+    background: white;
+    border: 1px solid #444;
+    border-radius: 6px;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
+  }
+  
+  .actions {
+    margin-top: 20px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+  }
+  
+  .actions button {
+    padding: 0.7rem 1.2rem;
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: #222;
+    color: white;
+    transition: background 0.3s;
+  }
+  
+  .actions button:hover {
+    background-color: #444;
+  }
+  
+  .action-log {
+    margin-top: 20px;
+    text-align: center;
+  }
+  .player-bet {
+    font-size: 12px;
+    color: #0ff;
+    margin-top: 2px;
+  }
+  
+  .pot-display {
+    position: absolute;
+    top: 45%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 20px;
+    font-weight: bold;
+    color: gold;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 6px 12px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+  }
+  .raise-input {
+    margin-top: 1rem;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+  }
+  
+  .raise-input input {
+    padding: 0.5rem;
+    width: 120px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    text-align: center;
+  }
+  
+  .raise-input button {
+    padding: 0.5rem 1rem;
+    background-color: #28a745;
+    color: white;
+    font-size: 1rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .timer {
+    margin-top: 4px;
+    font-weight: bold;
+    color: red;
+    font-size: 18px;
+    animation: blink 1s step-start 0s infinite;
+  }
+  
+  @keyframes blink {
+    50% { opacity: 0.3; }
+  }
+
+  .show-cards-toggle {
+    margin-top: 10px;
+    text-align: center;
+  }
+  .show-cards-toggle {
+    position: absolute;
+    top: 0;
+    right: -80px; /* או left: -80px אם אתה רוצה לצד שמאל */
+    background-color: #ffeb3b;
+    padding: 4px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    white-space: nowrap;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+  }
+  .active-seat {
+    border: 2px solid gold;
+    box-shadow: 0 0 10px gold;
+  }
