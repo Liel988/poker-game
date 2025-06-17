@@ -86,17 +86,19 @@ function Table() {
     const [showAllCards, setShowAllCards] = useState(false);
     const socket = useRef(null);
     useEffect(() => {
-        startNewHand(players);
-    }, []);
-    useEffect(() => {
-        socket.current = io('http://localhost:3001');
-      
+        socket.current = io('https://poker-game-1.onrender.com');
         socket.current.emit('join-table', tableId);
-      
-        socket.current.on('player-joined', (playerId) => {
-          console.log('שחקן התחבר לשולחן:', playerId);
+        socket.current.on('state-update', (tableData) => {
+            setPlayers(tableData.players);
+            setPot(tableData.pot);
+            setLog(tableData.log || []);
+            setCurrentTurn(tableData.currentTurn);
+            setCommunityCards(tableData.communityCards || []);
         });
-      
+        socket.current.on('player-joined', (playerId) => {
+            console.log('שחקן התחבר לשולחן:', playerId);
+        });
+
         socket.current.on('action-update', (data) => {
             if (data.type === 'update-state') {
                 setPlayers(data.players);
@@ -104,17 +106,17 @@ function Table() {
                 setCurrentTurn(data.currentTurn);
                 setCommunityCards(data.communityCards || []);
                 setLog(prev => [`🎮 פעולה: ${data.action} (${data.playerName})`, ...prev]);
-              }
-          console.log('פעולה התקבלה מהשרת:', data);
-          // בעתיד תוכל לעדכן כאן את players, pot וכו'
-        
+            }
+            console.log('פעולה התקבלה מהשרת:', data);
+            // בעתיד תוכל לעדכן כאן את players, pot וכו'
+
         });
-      
+
         return () => {
-          socket.current.disconnect();
+            socket.current.disconnect();
         };
-      }, []);
-    
+    }, []);
+
     useEffect(() => {
         setTimeLeft(180);
         const interval = setInterval(() => {
@@ -279,11 +281,11 @@ function Table() {
         setPlayers(updated);
         if (socket.current) {
             socket.current.emit('player-action', {
-              tableId,
-              action,
-              playerId: players[currentTurn].id
+                tableId,
+                action,
+                playerId: players[currentTurn].id
             });
-          }
+        }
         if (checkForSingleRemaining()) return;
         nextTurn();
     };
