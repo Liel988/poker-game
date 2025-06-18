@@ -61,7 +61,7 @@ function evaluateHand(cards) {
 }
 
 function Table() {
-    const myPlayerId = 1; // מזהה של השחקן המקומי (נניח לידר = 1)
+    const mySocketId = useRef(null);
     const { tableId } = useParams();
     const [players, setPlayers] = useState([]);
     const [dealerIndex, setDealerIndex] = useState(0);
@@ -86,7 +86,11 @@ function Table() {
     };
     useEffect(() => {
         socket.current = io('https://poker-game-1.onrender.com');
-        socket.current.emit('join-table', tableId);
+
+        socket.current.on('connect', () => {
+            mySocketId.current = socket.current.id;
+            socket.current.emit('join-table', tableId);
+        });
         socket.current.on('state-update', (tableData) => {
             setPlayers(tableData.players);
             setPot(tableData.pot);
@@ -337,8 +341,7 @@ function Table() {
                     <div className="player-hand">
                         {player.hand.map((card, i) => (
                             <span key={i}>
-                                {(player.id === myPlayerId || showAllCards) ? card : '🂠'}
-                            </span>
+                                {(player.id === mySocketId.current || showAllCards) ? card : '🂠'}                            </span>
                         ))}
                     </div>
                     <div className="player-chips">💵 {player.chips}</div>
