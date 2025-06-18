@@ -85,6 +85,12 @@ function Table() {
     const [timeLeft, setTimeLeft] = useState(180);
     const [showAllCards, setShowAllCards] = useState(false);
     const socket = useRef(null);
+
+    const startGame = () => {
+        if (socket.current) {
+            socket.current.emit('start-game', tableId);
+        }
+    };
     useEffect(() => {
         socket.current = io('https://poker-game-1.onrender.com');
         socket.current.emit('join-table', tableId);
@@ -359,6 +365,11 @@ function Table() {
                     ))}
                 </div>
                 <div className="pot-display">🏆 {pot}</div>
+                {players.length >= 2 && (
+                    <div className="start-game-button">
+                        <button onClick={startGame}>🎬 התחל משחק</button>
+                    </div>
+                )}
                 {players[0].id === players[currentTurn].id && (
                     <div className="show-cards-toggle">
                         <button onClick={() => setShowAllCards(prev => !prev)}>
@@ -367,6 +378,11 @@ function Table() {
                     </div>
                 )}
             </div>
+            {players.length >= 2 && (
+                <div className="start-game-button">
+                    <button onClick={startGame}>🎬 התחל משחק</button>
+                </div>
+            )}
             <div className="actions">
                 <button onClick={() => handleAction('Check')}>Check</button>
                 <button onClick={() => handleAction('Call')}>Call</button>
