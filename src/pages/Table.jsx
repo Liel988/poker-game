@@ -63,13 +63,7 @@ function evaluateHand(cards) {
 function Table() {
     const myPlayerId = 1; // מזהה של השחקן המקומי (נניח לידר = 1)
     const { tableId } = useParams();
-    const [players, setPlayers] = useState([]); id: i + 1,
-        name: `שחקן ${i + 1}`,
-            chips: 1000,
-                currentBet: 0,
-                    folded: false,
-                        hand: []
-})));
+    const [players, setPlayers] = useState([]);
 const [dealerIndex, setDealerIndex] = useState(0);
 const [currentTurn, setCurrentTurn] = useState(0);
 const [currentBet, setCurrentBet] = useState(0);
