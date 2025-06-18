@@ -212,6 +212,7 @@ app.get('/', (req, res) => {
   res.send('🎉 Poker server is running!');
 });
 
-const PORT = process.env.PORT;server.listen(PORT, () => {
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
   console.log(`✅ השרת מאזין על פורט ${PORT}`);
 });
