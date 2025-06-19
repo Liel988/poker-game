@@ -218,12 +218,22 @@ function Table() {
         }
     };
 
+    // תיקון פונקציית handleRaise
+    const handleRaise = () => {
+        if (!isRaising) {
+            setIsRaising(true);
+            setRaiseAmount(String(currentBet + 1)); // הגדרת סכום ברירת מחדל
+        } else {
+            confirmRaise();
+        }
+    };
+
     const confirmRaise = () => {
         const amount = parseInt(raiseAmount);
         const currentPlayer = getCurrentPlayer();
         
         if (!currentPlayer || isNaN(amount) || amount <= currentBet) {
-            setLog(prev => ['❌ סכום רייז לא תקין', ...prev]);
+            setLog(prev => ['❌ סכום רייז לא תקין - חייב להיות גדול מההימור הנוכחי', ...prev]);
             return;
         }
 
@@ -238,9 +248,11 @@ function Table() {
 
     // פונקציות עזר שרק קוראות מה-state
     const getVisibleCommunityCards = () => {
+        console.log('Stage:', stage, 'Community cards:', communityCards);
         if (stage === 'pre-flop') return [];
         if (stage === 'flop') return communityCards.slice(0, 3);
         if (stage === 'turn') return communityCards.slice(0, 4);
+        if (stage === 'river') return communityCards.slice(0, 5);
         return communityCards;
     };
 
@@ -281,6 +293,11 @@ function Table() {
         return Math.min(currentBet - myPlayer.currentBet, myPlayer.chips);
     };
 
+    const canRaise = () => {
+        const myPlayer = getMyPlayer();
+        return myPlayer && myPlayer.chips > 0 && (currentBet === 0 || myPlayer.chips + myPlayer.currentBet > currentBet);
+    };
+
     return (
         <div className="table-wrapper">
             <h2 className="table-title">שולחן #{tableId.slice(0, 6)}</h2>
@@ -304,7 +321,10 @@ function Table() {
                 <div>הימור נוכחי: {currentBet}</div>
                 <div>יכול Check? {canCheck() ? 'כן' : 'לא'}</div>
                 <div>יכול Call? {canCall() ? 'כן' : 'לא'}</div>
+                <div>יכול Raise? {canRaise() ? 'כן' : 'לא'}</div>
                 <div>סכום Call: {getCallAmount()}</div>
+                <div>קלפי קהילה נראים: {getVisibleCommunityCards().length}</div>
+                <div>השחקן שלי: {JSON.stringify(getMyPlayer()?.hand || 'אין')}</div>
             </div>
 
             <div className="poker-table">
@@ -321,11 +341,14 @@ function Table() {
                             <div className="avatar">🎭</div>
                             <div className="player-name">{player.name}</div>
                             <div className="player-hand">
-                                {player.hand && player.hand.map((card, i) => (
+                                {player.hand && player.hand.length > 0 && player.hand.map((card, i) => (
                                     <span key={i} className="card">
                                         {(player.id === mySocketId.current || showAllCards) ? card : '🂠'}
                                     </span>
                                 ))}
+                                {(!player.hand || player.hand.length === 0) && gameStarted && (
+                                    <span className="no-cards">אין קלפים</span>
+                                )}
                             </div>
                             <div className="player-chips">💵 {player.chips}</div>
                             <div className="player-bet">💸 {player.currentBet}</div>
@@ -345,11 +368,17 @@ function Table() {
                 )}
                 
                 <div className="community-cards">
-                    <h4>קלפי השולחן:</h4>
+                    <h4>קלפי השולחן ({stage}):</h4>
                     <div className="cards-container">
-                        {getVisibleCommunityCards().map((card, i) => (
-                            <div className="card" key={i}>{card}</div>
-                        ))}
+                        {getVisibleCommunityCards().length > 0 ? (
+                            getVisibleCommunityCards().map((card, i) => (
+                                <div className="card" key={i}>{card || '🂠'}</div>
+                            ))
+                        ) : (
+                            <div className="no-community-cards">
+                                {stage === 'pre-flop' ? 'ממתין לפלופ...' : 'אין קלפי קהילה'}
+                            </div>
+                        )}
                     </div>
                 </div>
                 
@@ -380,11 +409,11 @@ function Table() {
                             Call ({getCallAmount()})
                         </button>
                         <button 
-                            onClick={() => handleAction('Raise')}
-                            style={{backgroundColor: 'orange'}}
-                            disabled={!getMyPlayer() || getMyPlayer().chips <= 0}
+                            onClick={handleRaise}
+                            style={{backgroundColor: canRaise() ? 'orange' : 'lightgray'}}
+                            disabled={!canRaise()}
                         >
-                            Raise
+                            {isRaising ? 'בצע Raise' : 'Raise'}
                         </button>
                         <button 
                             onClick={() => handleAction('Fold')}
@@ -416,17 +445,44 @@ function Table() {
 
             {/* Raise input */}
             {isRaising && (
-                <div className="raise-input">
+                <div className="raise-input" style={{
+                    position: 'fixed',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    background: 'white',
+                    padding: '20px',
+                    border: '2px solid #333',
+                    borderRadius: '10px',
+                    zIndex: 1000
+                }}>
+                    <h4>בחר סכום לרייז:</h4>
                     <input
                         type="number"
                         min={currentBet + 1}
                         max={getMyPlayer() ? getMyPlayer().chips + getMyPlayer().currentBet : 0}
-                        placeholder="סכום רייז"
+                        placeholder={`מינימום: ${currentBet + 1}`}
                         value={raiseAmount}
                         onChange={(e) => setRaiseAmount(e.target.value)}
+                        style={{margin: '10px 0', padding: '5px', width: '200px'}}
                     />
-                    <button onClick={confirmRaise}>בצע</button>
-                    <button onClick={() => setIsRaising(false)}>ביטול</button>
+                    <div>
+                        <button 
+                            onClick={confirmRaise}
+                            style={{backgroundColor: 'lightgreen', margin: '5px', padding: '10px'}}
+                        >
+                            בצע רייז
+                        </button>
+                        <button 
+                            onClick={() => {
+                                setIsRaising(false);
+                                setRaiseAmount('');
+                            }}
+                            style={{backgroundColor: 'lightcoral', margin: '5px', padding: '10px'}}
+                        >
+                            ביטול
+                        </button>
+                    </div>
                 </div>
             )}
 
