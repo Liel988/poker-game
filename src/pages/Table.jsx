@@ -32,6 +32,7 @@ function evaluateHand(cards) {
         }
     }
 
+    
     let handName = 'High Card';
     let score = 0;
     let best = Math.max(...numbers.map(n => n.rank));
@@ -69,6 +70,8 @@ function Table() {
     const [timeLeft, setTimeLeft] = useState(180);
     const [showAllCards, setShowAllCards] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
+    // הוספת state עבור ה-socket ID כדי לגרום לרינדור מחדש
+    const [myId, setMyId] = useState(null);
     
     const socket = useRef(null);
 
@@ -93,15 +96,18 @@ function Table() {
         });
 
         socket.current.on('connect', () => {
-            console.log('Connected to server');
+            console.log('Connected to server, socket ID:', socket.current.id);
             setIsConnected(true);
             mySocketId.current = socket.current.id;
+            setMyId(socket.current.id); // עדכון ה-state כדי לגרום לרינדור מחדש
+            console.log('mySocketId set to:', mySocketId.current);
             socket.current.emit('join-table', tableId);
         });
 
         socket.current.on('disconnect', () => {
             console.log('Disconnected from server');
             setIsConnected(false);
+            setMyId(null);
         });
 
         socket.current.on('connect_error', (error) => {
@@ -312,7 +318,9 @@ function Table() {
             {/* Debug info */}
             <div className="debug-info" style={{fontSize: '12px', marginBottom: '10px', backgroundColor: '#f0f0f0', padding: '10px'}}>
                 <div>מספר שחקנים: {players.length}</div>
-                <div>Socket ID: {mySocketId.current}</div>
+                <div>My Socket ID: {mySocketId.current || 'לא מוגדר'}</div>
+                <div>My ID State: {myId || 'לא מוגדר'}</div>
+                <div>Players IDs: {players.map(p => `${p.name}:${p.id.slice(0,8)}`).join(', ')}</div>
                 <div>האם אני השחקן הראשון? {isFirstPlayer() ? 'כן' : 'לא'}</div>
                 <div>משחק התחיל? {gameStarted ? 'כן' : 'לא'}</div>
                 <div>תור נוכחי: {currentTurn} {getCurrentPlayer() ? `(${getCurrentPlayer().name})` : '(לא מוגדר)'}</div>
@@ -333,38 +341,47 @@ function Table() {
                         <p>ממתין לשחקנים...</p>
                     </div>
                 ) : (
-                    players.map((player, index) => (
-                        <div 
-                            key={player.id} 
-                            className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}
-                        >
-                            <div className="avatar">🎭</div>
-                            <div className="player-name">{player.name}</div>
-                            <div className="player-hand">
-                                {player.hand && player.hand.length > 0 && player.hand.map((card, i) => (
-                                    <span key={i} className="card">
-                                        {(player.id === mySocketId.current || showAllCards) ? card : '🂠'}
-                                    </span>
-                                ))}
-                                {(!player.hand || player.hand.length === 0) && gameStarted && (
-                                    <span className="no-cards">אין קלפים</span>
+                    players.map((player, index) => {
+                        // חישוב האם להציג את הקלפים
+                        const isMyPlayer = player.id === mySocketId.current;
+                        const shouldShowCards = isMyPlayer || showAllCards;
+                        
+                        console.log(`Player ${player.name}: isMyPlayer=${isMyPlayer}, shouldShow=${shouldShowCards}, myId=${mySocketId.current}, playerId=${player.id}`);
+                        
+                        return (
+                            <div 
+                                key={player.id} 
+                                className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}
+                            >
+                                <div className="avatar">🎭</div>
+                                <div className="player-name">{player.name} {isMyPlayer ? '(אני)' : ''}</div>
+                                <div className="player-hand">
+                                    {player.hand && player.hand.length > 0 ? (
+                                        player.hand.map((card, i) => (
+                                            <span key={i} className="card">
+                                                {shouldShowCards ? card : '🂠'}
+                                            </span>
+                                        ))
+                                    ) : (
+                                        gameStarted && <span className="no-cards">אין קלפים</span>
+                                    )}
+                                </div>
+                                <div className="player-chips">💵 {player.chips}</div>
+                                <div className="player-bet">💸 {player.currentBet}</div>
+                                {index === currentTurn && !player.folded && gameStarted && (
+                                    <>
+                                        <div className="turn-indicator">🎯</div>
+                                        {isMyTurn() && (
+                                            <div className="timer">⏱️ {timeLeft}s</div>
+                                        )}
+                                    </>
+                                )}
+                                {index === dealerIndex && (
+                                    <div className="dealer-button">D</div>
                                 )}
                             </div>
-                            <div className="player-chips">💵 {player.chips}</div>
-                            <div className="player-bet">💸 {player.currentBet}</div>
-                            {index === currentTurn && !player.folded && gameStarted && (
-                                <>
-                                    <div className="turn-indicator">🎯</div>
-                                    {isMyTurn() && (
-                                        <div className="timer">⏱️ {timeLeft}s</div>
-                                    )}
-                                </>
-                            )}
-                            {index === dealerIndex && (
-                                <div className="dealer-button">D</div>
-                            )}
-                        </div>
-                    ))
+                        );
+                    })
                 )}
                 
                 <div className="community-cards">
