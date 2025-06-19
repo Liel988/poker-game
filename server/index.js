@@ -5,13 +5,17 @@ const cors = require('cors');
 const mysql = require('mysql2/promise');
 
 const app = express();
-app.use(cors());
-
+app.use(cors({
+  origin: 'https://poker-client-dkvn.onrender.com',
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*',
-  },
+    origin: 'https://poker-client-dkvn.onrender.com',
+    methods: ['GET', 'POST']
+  }
 });
 
 // חיבור למסד נתונים MySQL

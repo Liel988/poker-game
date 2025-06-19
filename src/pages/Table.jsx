@@ -97,13 +97,14 @@ function Table() {
             setLog(tableData.log || []);
             setCurrentTurn(tableData.currentTurn);
             setCommunityCards(tableData.communityCards || []);
-        
+
             const isAlreadySeated = tableData.players.some(p => p.id === socket.current.id);
             if (!isAlreadySeated) {
                 socket.current.on('connect', () => {
                     mySocketId.current = socket.current.id;
                     socket.current.emit('join-table', tableId); // רק אחרי שיש socket.id!
-                  });            }
+                });
+            }
         });
 
         socket.current.on('action-update', (data) => {
@@ -335,7 +336,7 @@ function Table() {
             <div className="poker-table">
                 {players.map((player, index) => (<div key={player.id} className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}>
                     <div className="avatar">🎭</div>
-                    {index === 0 && (
+                    {player.id === mySocketId.current && (
                         <div className="show-cards-toggle">
                             <button onClick={() => setShowAllCards(prev => !prev)}>
                                 {showAllCards ? 'הסתר קלפים' : 'הצג קלפים'}
