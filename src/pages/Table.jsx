@@ -78,6 +78,7 @@ function Table() {
     const [timeLeft, setTimeLeft] = useState(180);
     const [showAllCards, setShowAllCards] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
+    const [firstPlayerJoined, setFirstPlayerJoined] = useState(null); // שמירה של השחקן הראשון
     const socket = useRef(null);
 
     const startGame = () => {
@@ -128,6 +129,11 @@ function Table() {
                 setCurrentBet(tableData.currentBet || 0);
                 setStage(tableData.stage || 'pre-flop');
                 setDealerIndex(tableData.dealerIndex || 0);
+                
+                // שמירה של השחקן הראשון שהצטרף
+                if (tableData.players && tableData.players.length > 0 && !firstPlayerJoined) {
+                    setFirstPlayerJoined(tableData.players[0].id);
+                }
             }
         });
 
@@ -151,7 +157,7 @@ function Table() {
                 socket.current.disconnect();
             }
         };
-    }, [tableId]);
+    }, [tableId, firstPlayerJoined]);
 
     useEffect(() => {
         if (players.length === 0) return;
@@ -290,7 +296,11 @@ function Table() {
 
     const nextTurn = () => {
         const next = getNextActivePlayer(currentTurn);
-        isBettingRoundOver(next) ? resetBetsForNextRound() : setCurrentTurn(next);
+        if (isBettingRoundOver(next)) {
+            resetBetsForNextRound();
+        } else {
+            setCurrentTurn(next);
+        }
     };
 
     const handleAction = (action) => {
@@ -389,6 +399,11 @@ function Table() {
         return players[currentTurn];
     };
 
+    // בדיקה אם המשתמש הוא השחקן הראשון שהצטרף
+    const isFirstPlayer = () => {
+        return mySocketId.current === firstPlayerJoined;
+    };
+
     return (
         <div className="table-wrapper">
             <h2 className="table-title">שולחן #{tableId.slice(0, 6)}</h2>
@@ -404,6 +419,8 @@ function Table() {
             <div className="debug-info" style={{fontSize: '12px', marginBottom: '10px', backgroundColor: '#f0f0f0', padding: '10px'}}>
                 <div>מספר שחקנים: {players.length}</div>
                 <div>Socket ID: {mySocketId.current}</div>
+                <div>First Player ID: {firstPlayerJoined}</div>
+                <div>האם אני השחקן הראשון? {isFirstPlayer() ? 'כן' : 'לא'}</div>
                 <div>תור נוכחי: {currentTurn} {getCurrentPlayer() ? `(${getCurrentPlayer().name})` : '(לא מוגדר)'}</div>
                 <div>זה התור שלי? {isMyTurn() ? 'כן' : 'לא'}</div>
                 <div>שלב: {stage}</div>
@@ -459,7 +476,7 @@ function Table() {
                 <div className="stage-display">שלב: {stage}</div>
             </div>
 
-            {/* כפתורי פעולה - עם debug */}
+            {/* כפתורי פעולה - רק למי שהתור שלו */}
             <div className="actions-section">
                 <div style={{fontSize: '12px', marginBottom: '5px'}}>
                     כפתורי פעולה: {isMyTurn() ? 'מוצגים (התור שלך)' : 'מוסתרים (לא התור שלך)'}
@@ -496,8 +513,8 @@ function Table() {
                 )}
             </div>
 
-            {/* כפתור התחלת משחק */}
-            {players.length >= 2 && (
+            {/* כפתור התחלת משחק - רק לשחקן הראשון */}
+            {players.length >= 2 && isFirstPlayer() && (
                 <div className="start-game-button">
                     <button onClick={startGame} disabled={!isConnected}>
                         🎬 התחל משחק
@@ -505,12 +522,14 @@ function Table() {
                 </div>
             )}
 
-            {/* כפתור הצגת כל הקלפים - תמיד מוצג */}
-            <div className="show-cards-toggle">
-                <button onClick={() => setShowAllCards(prev => !prev)}>
-                    {showAllCards ? '🙈 הסתר קלפים של כולם' : '👀 הצג קלפים של כולם'}
-                </button>
-            </div>
+            {/* כפתור הצגת כל הקלפים - רק לשחקן הראשון */}
+            {isFirstPlayer() && (
+                <div className="show-cards-toggle">
+                    <button onClick={() => setShowAllCards(prev => !prev)}>
+                        {showAllCards ? '🙈 הסתר קלפים של כולם' : '👀 הצג קלפים של כולם'}
+                    </button>
+                </div>
+            )}
 
             {/* Raise input */}
             {isRaising && (
