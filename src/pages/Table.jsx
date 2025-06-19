@@ -77,55 +77,82 @@ function Table() {
     const [bettingStartIndex, setBettingStartIndex] = useState(0);
     const [timeLeft, setTimeLeft] = useState(180);
     const [showAllCards, setShowAllCards] = useState(false);
+    const [isConnected, setIsConnected] = useState(false);
     const socket = useRef(null);
 
     const startGame = () => {
-        if (socket.current) {
+        if (socket.current && socket.current.connected) {
             socket.current.emit('start-game', tableId);
+        } else {
+            console.error('Socket not connected');
         }
     };
+
     useEffect(() => {
-        socket.current = io('https://poker-game-1.onrender.com');
+        // יצירת חיבור socket
+        socket.current = io('https://poker-game-1.onrender.com', {
+            transports: ['websocket', 'polling'],
+            timeout: 20000,
+            forceNew: true
+        });
 
         socket.current.on('connect', () => {
+            console.log('Connected to server');
+            setIsConnected(true);
             mySocketId.current = socket.current.id;
+            // הצטרפות לשולחן מיד אחרי החיבור
             socket.current.emit('join-table', tableId);
         });
-        socket.current.on('state-update', (tableData) => {
-            setPlayers(tableData.players);
-            setPot(tableData.pot);
-            setLog(tableData.log || []);
-            setCurrentTurn(tableData.currentTurn);
-            setCommunityCards(tableData.communityCards || []);
 
-            const isAlreadySeated = tableData.players.some(p => p.id === socket.current.id);
-            if (!isAlreadySeated) {
-                socket.current.on('connect', () => {
-                    mySocketId.current = socket.current.id;
-                    socket.current.emit('join-table', tableId); // רק אחרי שיש socket.id!
-                });
+        socket.current.on('disconnect', () => {
+            console.log('Disconnected from server');
+            setIsConnected(false);
+        });
+
+        socket.current.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            setIsConnected(false);
+        });
+
+        socket.current.on('state-update', (tableData) => {
+            console.log('State update received:', tableData);
+            if (tableData) {
+                setPlayers(tableData.players || []);
+                setPot(tableData.pot || 0);
+                setLog(tableData.log || []);
+                setCurrentTurn(tableData.currentTurn || 0);
+                setCommunityCards(tableData.communityCards || []);
+                setCurrentBet(tableData.currentBet || 0);
+                setStage(tableData.stage || 'pre-flop');
+                setDealerIndex(tableData.dealerIndex || 0);
             }
         });
 
         socket.current.on('action-update', (data) => {
-            if (data.type === 'update-state') {
-                setPlayers(data.players);
-                setPot(data.pot);
-                setCurrentTurn(data.currentTurn);
+            console.log('Action update received:', data);
+            if (data && data.type === 'update-state') {
+                setPlayers(data.players || []);
+                setPot(data.pot || 0);
+                setCurrentTurn(data.currentTurn || 0);
                 setCommunityCards(data.communityCards || []);
-                setLog(prev => [`🎮 פעולה: ${data.action} (${data.playerName})`, ...prev]);
+                setCurrentBet(data.currentBet || 0);
+                if (data.action && data.playerName) {
+                    setLog(prev => [`🎮 פעולה: ${data.action} (${data.playerName})`, ...prev]);
+                }
             }
-            console.log('פעולה התקבלה מהשרת:', data);
-            // בעתיד תוכל לעדכן כאן את players, pot וכו'
-
         });
 
+        // ניקוי בעת unmount
         return () => {
-            socket.current.disconnect();
+            if (socket.current) {
+                socket.current.disconnect();
+            }
         };
-    }, []);
+    }, [tableId]);
 
     useEffect(() => {
+        if (players.length === 0) return;
+        
         setTimeLeft(180);
         const interval = setInterval(() => {
             setTimeLeft(prev => {
@@ -138,7 +165,8 @@ function Table() {
             });
         }, 1000);
         return () => clearInterval(interval);
-    }, [currentTurn]);
+    }, [currentTurn, players.length]);
+
     const checkForSingleRemaining = () => {
         const remaining = players.filter(p => !p.folded);
         if (remaining.length === 1) {
@@ -156,6 +184,7 @@ function Table() {
         }
         return false;
     };
+
     const startNewHand = (prevPlayers) => {
         const newDeck = generateDeck();
         const updatedPlayers = prevPlayers.map(p => ({
@@ -190,11 +219,12 @@ function Table() {
     };
 
     const getNextActivePlayer = (fromIndex = currentTurn) => {
+        if (players.length === 0) return 0;
         let index = fromIndex, attempts = 0;
         do {
             index = (index + 1) % players.length;
             attempts++;
-        } while (players[index].folded && attempts < players.length);
+        } while (players[index]?.folded && attempts < players.length);
         return index;
     };
 
@@ -264,7 +294,7 @@ function Table() {
         const updated = [...players];
         const player = updated[currentTurn];
 
-        if (player.folded) return nextTurn();
+        if (!player || player.folded) return nextTurn();
 
         if (action === 'Fold') {
             player.folded = true;
@@ -274,8 +304,8 @@ function Table() {
             const callAmount = Math.min(toCall, player.chips);
             player.chips -= callAmount;
             player.currentBet += callAmount;
-            setPot(prev => prev + toCall);
-            setLog(prev => [`${player.name} השווה ${toCall} ₪`, ...prev]);
+            setPot(prev => prev + callAmount);
+            setLog(prev => [`${player.name} השווה ${callAmount} ₪`, ...prev]);
         } else if (action === 'Raise') {
             setIsRaising(true);
             return;
@@ -287,14 +317,18 @@ function Table() {
                 return;
             }
         }
+        
         setPlayers(updated);
-        if (socket.current) {
+        
+        if (socket.current && socket.current.connected) {
             socket.current.emit('player-action', {
                 tableId,
                 action,
-                playerId: players[currentTurn].id
+                playerId: player.id,
+                playerName: player.name
             });
         }
+        
         if (checkForSingleRemaining()) return;
         nextTurn();
     };
@@ -304,7 +338,7 @@ function Table() {
         const updated = [...players];
         const player = updated[currentTurn];
 
-        if (isNaN(amount) || amount <= currentBet || amount > player.chips + player.currentBet) {
+        if (!player || isNaN(amount) || amount <= currentBet || amount > player.chips + player.currentBet) {
             setLog(prev => [`סכום רייז לא תקין ❌`, ...prev]);
             return;
         }
@@ -330,75 +364,141 @@ function Table() {
         return communityCards;
     };
 
+    const isMyTurn = () => {
+        return players.length > 0 && 
+               players[currentTurn] && 
+               players[currentTurn].id === mySocketId.current;
+    };
+
     return (
         <div className="table-wrapper">
             <h2 className="table-title">שולחן #{tableId.slice(0, 6)}</h2>
+            
+            {/* הצגת סטטוס החיבור */}
+            <div className="connection-status">
+                <span className={isConnected ? 'connected' : 'disconnected'}>
+                    {isConnected ? '🟢 מחובר' : '🔴 לא מחובר'}
+                </span>
+            </div>
+
+            {/* Debug info */}
+            <div className="debug-info" style={{fontSize: '12px', marginBottom: '10px'}}>
+                <div>מספר שחקנים: {players.length}</div>
+                <div>Socket ID: {mySocketId.current}</div>
+                <div>תור נוכחי: {currentTurn}</div>
+            </div>
+
             <div className="poker-table">
-                {players.map((player, index) => (<div key={player.id} className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}>
-                    <div className="avatar">🎭</div>
-                    {player.id === mySocketId.current && (
-                        <div className="show-cards-toggle">
-                            <button onClick={() => setShowAllCards(prev => !prev)}>
-                                {showAllCards ? 'הסתר קלפים' : 'הצג קלפים'}
-                            </button>
+                {players.length === 0 ? (
+                    <div className="no-players">
+                        <p>ממתין לשחקנים...</p>
+                    </div>
+                ) : (
+                    players.map((player, index) => (
+                        <div 
+                            key={player.id} 
+                            className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}
+                        >
+                            <div className="avatar">🎭</div>
+                            <div className="player-name">{player.name}</div>
+                            <div className="player-hand">
+                                {player.hand && player.hand.map((card, i) => (
+                                    <span key={i} className="card">
+                                        {(player.id === mySocketId.current || showAllCards) ? card : '🂠'}
+                                    </span>
+                                ))}
+                            </div>
+                            <div className="player-chips">💵 {player.chips}</div>
+                            <div className="player-bet">💸 {player.currentBet}</div>
+                            {index === currentTurn && !player.folded && (
+                                <>
+                                    <div className="turn-indicator">🎯</div>
+                                    <div className="timer">⏱️ {timeLeft}s</div>
+                                </>
+                            )}
+                            {index === dealerIndex && (
+                                <div className="dealer-button">D</div>
+                            )}
                         </div>
-                    )}
-                    <div className="player-name">{player.name}</div>
-                    <div className="player-hand">
-                        {player.hand.map((card, i) => (
-                            <span key={i}>
-                                {(player.id === mySocketId.current || showAllCards) ? card : '🂠'}                            </span>
+                    ))
+                )}
+                
+                <div className="community-cards">
+                    <h4>קלפי השולחן:</h4>
+                    <div className="cards-container">
+                        {getVisibleCommunityCards().map((card, i) => (
+                            <div className="card" key={i}>{card}</div>
                         ))}
                     </div>
-                    <div className="player-chips">💵 {player.chips}</div>
-                    <div className="player-bet">💸 {player.currentBet}</div>
-                    {index === currentTurn && !player.folded && (
-                        <>
-                            <div className="turn-indicator">🎯</div>
-                            <div className="timer">⏱️ {timeLeft}s</div>
-                        </>
-                    )}
                 </div>
-                ))}
-                <div className="community-cards">
-                    {getVisibleCommunityCards().map((card, i) => (
-                        <div className="card" key={i}>{card}</div>
-                    ))}
+                
+                <div className="pot-display">🏆 קופה: {pot}</div>
+                <div className="current-bet">💸 הימור נוכחי: {currentBet}</div>
+                <div className="stage-display">שלב: {stage}</div>
+            </div>
+
+            {/* כפתורי פעולה */}
+            {isMyTurn() && (
+                <div className="actions">
+                    <button 
+                        onClick={() => handleAction('Check')}
+                        disabled={players[currentTurn]?.currentBet !== currentBet}
+                    >
+                        Check
+                    </button>
+                    <button 
+                        onClick={() => handleAction('Call')}
+                        disabled={players[currentTurn]?.currentBet === currentBet}
+                    >
+                        Call ({currentBet - (players[currentTurn]?.currentBet || 0)})
+                    </button>
+                    <button onClick={() => handleAction('Raise')}>Raise</button>
+                    <button onClick={() => handleAction('Fold')}>Fold</button>
                 </div>
-                <div className="pot-display">🏆 {pot}</div>
-                {players.length >= 2 && (
-                    <div className="start-game-button">
-                        <button onClick={startGame}>🎬 התחל משחק</button>
-                    </div>
-                )}
-                {players.length > 0 && players[currentTurn] && players[0].id === players[currentTurn].id && (<div className="show-cards-toggle">
+            )}
+
+            {/* כפתור התחלת משחק */}
+            {players.length >= 2 && (
+                <div className="start-game-button">
+                    <button onClick={startGame} disabled={!isConnected}>
+                        🎬 התחל משחק
+                    </button>
+                </div>
+            )}
+
+            {/* כפתור הצגת כל הקלפים */}
+            {players.length > 0 && (
+                <div className="show-cards-toggle">
                     <button onClick={() => setShowAllCards(prev => !prev)}>
                         {showAllCards ? 'הסתר קלפים' : 'הצג את כל הקלפים'}
                     </button>
                 </div>
-                )}
-            </div>
-            <div className="actions">
-                <button onClick={() => handleAction('Check')}>Check</button>
-                <button onClick={() => handleAction('Call')}>Call</button>
-                <button onClick={() => handleAction('Raise')}>Raise</button>
-                <button onClick={() => handleAction('Fold')}>Fold</button>
-            </div>
+            )}
+
+            {/* Raise input */}
             {isRaising && (
                 <div className="raise-input">
                     <input
                         type="number"
                         min={currentBet + 1}
+                        max={players[currentTurn]?.chips + players[currentTurn]?.currentBet}
                         placeholder="סכום רייז"
                         value={raiseAmount}
                         onChange={(e) => setRaiseAmount(e.target.value)}
                     />
                     <button onClick={confirmRaise}>בצע</button>
+                    <button onClick={() => setIsRaising(false)}>ביטול</button>
                 </div>
             )}
+
+            {/* יומן פעולות */}
             <div className="action-log">
                 <h4>יומן פעולות:</h4>
-                <ul>{log.map((entry, i) => <li key={i}>{entry}</li>)}</ul>
+                <ul>
+                    {log.map((entry, i) => (
+                        <li key={i}>{entry}</li>
+                    ))}
+                </ul>
             </div>
         </div>
     );

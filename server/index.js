@@ -2,7 +2,6 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const mysql = require('mysql2/promise');
 
 const app = express();
 app.use(cors({
@@ -18,142 +17,107 @@ const io = new Server(server, {
   }
 });
 
-// חיבור למסד נתונים MySQL
-const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'admin123', // החלף בסיסמה שלך
-  database: 'poker'
-};
+// אחסון זמני במקום MySQL - פתרון מהיר
+const tables = new Map();
+const players = new Map();
+
+// פונקציות עזר
+function getTableData(tableId) {
+  if (!tables.has(tableId)) {
+    tables.set(tableId, {
+      id: tableId,
+      pot: 0,
+      currentTurn: 0,
+      communityCards: [],
+      log: [],
+      players: []
+    });
+  }
+  return tables.get(tableId);
+}
+
+function getPlayersInTable(tableId) {
+  return Array.from(players.values()).filter(p => p.tableId === tableId);
+}
 
 io.on('connection', (socket) => {
   console.log('🟢 שחקן התחבר:', socket.id);
 
-  socket.on('join-table', async (tableId) => {
+  socket.on('join-table', (tableId) => {
     socket.join(tableId);
     console.log(`📥 ${socket.id} הצטרף לשולחן ${tableId}`);
 
-    const conn = await mysql.createConnection(dbConfig);
+    // יצירת שולחן אם לא קיים
+    const tableData = getTableData(tableId);
 
-    // צור שולחן אם לא קיים
-    await conn.execute(
-      `INSERT IGNORE INTO tables (id, pot, currentTurn, communityCards, log) VALUES (?, 0, 0, ?, ?)`,
-      [tableId, JSON.stringify([]), JSON.stringify([])]
-    );
-
-    // בדוק אם השחקן כבר קיים
-    const [existing] = await conn.execute(
-      `SELECT * FROM players WHERE id = ? AND tableId = ?`,
-      [socket.id, tableId]
-    );
-
-    if (existing.length === 0) {
+    // בדיקה אם השחקן כבר קיים
+    if (!players.has(socket.id)) {
+      const existingPlayers = getPlayersInTable(tableId);
+      const playerNumber = existingPlayers.length + 1;
+      
       console.log(`➕ מוסיף שחקן חדש עם id ${socket.id} לשולחן ${tableId}`);
-      const [count] = await conn.execute(
-        `SELECT COUNT(*) AS count FROM players WHERE tableId = ?`,
-        [tableId]
-      );
-      const playerNumber = count[0].count + 1;
-
-      await conn.execute(
-        `INSERT INTO players (id, tableId, name, chips, hand, currentBet, folded)
-         VALUES (?, ?, ?, 1000, ?, 0, false)`,
-        [socket.id, tableId, `שחקן ${playerNumber}`, JSON.stringify([])]
-      );
+      
+      players.set(socket.id, {
+        id: socket.id,
+        tableId: tableId,
+        name: `שחקן ${playerNumber}`,
+        chips: 1000,
+        hand: [],
+        currentBet: 0,
+        folded: false
+      });
     }
 
-    const [players] = await conn.execute(
-      `SELECT * FROM players WHERE tableId = ?`,
-      [tableId]
-    );
-
-    const [tableData] = await conn.execute(
-      `SELECT * FROM tables WHERE id = ?`,
-      [tableId]
-    );
-
-    conn.end();
+    const tablePlayers = getPlayersInTable(tableId);
+    
+    // עדכון הטבלה עם השחקנים
+    tableData.players = tablePlayers;
+    
+    console.log(`📊 שולחן ${tableId} עכשיו יש ${tablePlayers.length} שחקנים`);
 
     io.to(tableId).emit('state-update', {
-      players: players.map(p => ({
-        id: p.id,
-        name: p.name,
-        chips: p.chips,
-        hand: JSON.parse(p.hand),
-        currentBet: p.currentBet,
-        folded: p.folded
-      })),
-      pot: tableData[0].pot,
-      currentTurn: tableData[0].currentTurn,
-      communityCards: JSON.parse(tableData[0].communityCards),
-      log: JSON.parse(tableData[0].log)
+      players: tablePlayers,
+      pot: tableData.pot,
+      currentTurn: tableData.currentTurn,
+      communityCards: tableData.communityCards,
+      log: tableData.log
     });
   });
 
-  socket.on('player-action', async ({ tableId, action, playerId }) => {
-    const conn = await mysql.createConnection(dbConfig);
-
-    const [playerRows] = await conn.execute(
-      `SELECT * FROM players WHERE id = ? AND tableId = ?`,
-      [playerId, tableId]
-    );
-
-    const player = playerRows[0];
-    if (!player) return;
-
-    // שלוף את הלוג הנוכחי, הוסף את הפעולה, עדכן
-    const [tableRows] = await conn.execute(
-      `SELECT * FROM tables WHERE id = ?`,
-      [tableId]
-    );
-    let log = JSON.parse(tableRows[0].log || '[]');
-    log.unshift(`🎮 ${player.name} עשה ${action}`);
-
-    await conn.execute(
-      `UPDATE tables SET log = ? WHERE id = ?`,
-      [JSON.stringify(log), tableId]
-    );
-
-    const [players] = await conn.execute(
-      `SELECT * FROM players WHERE tableId = ?`,
-      [tableId]
-    );
-
-    const [table] = await conn.execute(
-      `SELECT * FROM tables WHERE id = ?`,
-      [tableId]
-    );
-
-    conn.end();
-
-    io.to(tableId).emit('state-update', {
-      players: players.map(p => ({
-        id: p.id,
-        name: p.name,
-        chips: p.chips,
-        hand: JSON.parse(p.hand),
-        currentBet: p.currentBet,
-        folded: p.folded
-      })),
-      pot: table[0].pot,
-      currentTurn: table[0].currentTurn,
-      communityCards: JSON.parse(table[0].communityCards),
-      log
-    });
-  });
-  socket.on('start-game', async (tableId) => {
-    const conn = await mysql.createConnection(dbConfig);
-
-    const [players] = await conn.execute(
-      `SELECT * FROM players WHERE tableId = ?`,
-      [tableId]
-    );
-
-    if (players.length < 2) {
-      console.log(`❌ לא ניתן להתחיל משחק עם פחות מ-2 שחקנים`);
-      conn.end();
+  socket.on('player-action', ({ tableId, action, playerId }) => {
+    const player = players.get(playerId);
+    if (!player) {
+      console.log(`❌ שחקן ${playerId} לא נמצא`);
       return;
     }
+
+    const tableData = getTableData(tableId);
+    
+    // הוספת פעולה ללוג
+    tableData.log.unshift(`🎮 ${player.name} עשה ${action}`);
+    
+    console.log(`🎯 שחקן ${player.name} עשה ${action}`);
+
+    const tablePlayers = getPlayersInTable(tableId);
+
+    io.to(tableId).emit('state-update', {
+      players: tablePlayers,
+      pot: tableData.pot,
+      currentTurn: tableData.currentTurn,
+      communityCards: tableData.communityCards,
+      log: tableData.log
+    });
+  });
+
+  socket.on('start-game', (tableId) => {
+    const tablePlayers = getPlayersInTable(tableId);
+    
+    if (tablePlayers.length < 2) {
+      console.log(`❌ לא ניתן להתחיל משחק עם פחות מ-2 שחקנים`);
+      return;
+    }
+
+    console.log(`🎬 מתחיל משחק בשולחן ${tableId} עם ${tablePlayers.length} שחקנים`);
 
     const suits = ['♠', '♥', '♦', '♣'];
     const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
@@ -165,51 +129,52 @@ io.on('connection', (socket) => {
     }
     deck.sort(() => Math.random() - 0.5);
 
-    for (const p of players) {
+    // חלוקת קלפים לכל שחקן
+    tablePlayers.forEach(player => {
       const hand = [deck.pop(), deck.pop()];
-      await conn.execute(
-        `UPDATE players SET hand = ?, currentBet = 0, folded = false WHERE id = ?`,
-        [JSON.stringify(hand), p.id]
-      );
-    }
+      player.hand = hand;
+      player.currentBet = 0;
+      player.folded = false;
+      players.set(player.id, player); // עדכון במפה
+    });
 
     const communityCards = [deck.pop(), deck.pop(), deck.pop(), deck.pop(), deck.pop()];
-    await conn.execute(
-      `UPDATE tables SET communityCards = ?, pot = 0, currentTurn = 0 WHERE id = ?`,
-      [JSON.stringify(communityCards), tableId]
-    );
-
-    const [updatedPlayers] = await conn.execute(
-      `SELECT * FROM players WHERE tableId = ?`,
-      [tableId]
-    );
-
-    conn.end();
+    const tableData = getTableData(tableId);
+    tableData.communityCards = communityCards;
+    tableData.pot = 0;
+    tableData.currentTurn = 0;
+    tableData.log = [`🎬 התחלת משחק!`];
 
     io.to(tableId).emit('state-update', {
-      players: updatedPlayers.map(p => ({
-        id: p.id,
-        name: p.name,
-        chips: p.chips,
-        hand: JSON.parse(p.hand),
-        currentBet: p.currentBet,
-        folded: p.folded
-      })),
+      players: tablePlayers,
       pot: 0,
       currentTurn: 0,
-      communityCards,
-      log: [`🎬 התחלת משחק`]
+      communityCards: communityCards,
+      log: [`🎬 התחלת משחק!`]
     });
   });
-  socket.on('disconnect', async () => {
+
+  socket.on('disconnect', () => {
     console.log('🔴 שחקן התנתק:', socket.id);
-
-    const conn = await mysql.createConnection(dbConfig);
-
-    // מחיקה מהטבלה
-    await conn.execute(`DELETE FROM players WHERE id = ?`, [socket.id]);
-
-    conn.end();
+    
+    // מחיקת השחקן
+    const player = players.get(socket.id);
+    if (player) {
+      console.log(`🗑️ מוחק שחקן ${player.name} מהשולחן ${player.tableId}`);
+      players.delete(socket.id);
+      
+      // עדכון לשחקנים הנותרים בשולחן
+      const tableData = getTableData(player.tableId);
+      const remainingPlayers = getPlayersInTable(player.tableId);
+      
+      io.to(player.tableId).emit('state-update', {
+        players: remainingPlayers,
+        pot: tableData.pot,
+        currentTurn: tableData.currentTurn,
+        communityCards: tableData.communityCards,
+        log: [...tableData.log, `🚪 ${player.name} עזב את השולחן`]
+      });
+    }
   });
 });
 
@@ -217,7 +182,7 @@ app.get('/', (req, res) => {
   res.send('🎉 Poker server is running!');
 });
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`✅ השרת מאזין על פורט ${PORT}`);
 });
