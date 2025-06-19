@@ -72,7 +72,10 @@ function checkIfRoundEnded(tableId) {
   const activeBets = activePlayers.map(p => p.currentBet);
   const allBetsEqual = activeBets.every(bet => bet === activeBets[0]);
   
-  return allBetsEqual;
+  // בדיקה אם כל השחקנים הפעילים פעלו במהלך הסיבוב הזה
+  const allPlayersActed = activePlayers.every(p => p.hasActed);
+  
+  return allBetsEqual && allPlayersActed;
 }
 
 function updateGameState(tableId) {
@@ -173,10 +176,11 @@ io.on('connection', (socket) => {
           player.currentBet = totalBetAmount;
           tableData.log.unshift(`📈 ${player.name} עשה raise ל-${totalBetAmount}`);
           
-          // איפוס hasActed לכל השחקנים כי יש הימור חדש
+          // איפוס hasActed לכל השחקנים אחרים כי יש הימור חדש
           tablePlayers.forEach(p => {
             if (p.id !== playerId) {
               p.hasActed = false;
+              players.set(p.id, p); // עדכון במפה
             }
           });
         }
@@ -193,11 +197,9 @@ io.on('connection', (socket) => {
     
     console.log(`🎯 שחקן ${player.name} עשה ${action}`);
 
-    // מעבר לשחקן הבא
-    if (!checkIfRoundEnded(tableId)) {
-      tableData.currentTurn = getNextActivePlayer(tableId, tableData.currentTurn);
-    } else {
-      // סיום הסיבוב - עבור לשלב הבא או סיים את המשחק
+    // בדיקה אם הסיבוב הסתיים
+    if (checkIfRoundEnded(tableId)) {
+      // סיום הסיבוב
       const activePlayers = tablePlayers.filter(p => !p.folded);
       if (activePlayers.length === 1) {
         // שחקן אחד נותר - הוא זוכה
@@ -212,6 +214,7 @@ io.on('connection', (socket) => {
           p.folded = false;
           p.hasActed = false;
           p.hand = [];
+          players.set(p.id, p); // עדכון במפה
         });
         tableData.communityCards = [];
         tableData.currentRound = 'preflop';
@@ -219,9 +222,13 @@ io.on('connection', (socket) => {
         // איפוס hasActed לסיבוב הבא
         tablePlayers.forEach(p => {
           p.hasActed = false;
+          players.set(p.id, p); // עדכון במפה
         });
         tableData.currentTurn = 0;
       }
+    } else {
+      // המשך הסיבוב - מעבר לשחקן הבא
+      tableData.currentTurn = getNextActivePlayer(tableId, tableData.currentTurn);
     }
 
     updateGameState(tableId);
