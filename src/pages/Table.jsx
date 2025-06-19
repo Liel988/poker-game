@@ -460,10 +460,20 @@ const styles = `
     color: white;
     font-size: 1.2em;
   }
+
+  .my-turn-indicator {
+    background: rgba(255, 215, 0, 0.9);
+    color: #333;
+    padding: 8px 15px;
+    border-radius: 20px;
+    margin-bottom: 10px;
+    font-weight: bold;
+    text-align: center;
+  }
 `;
 
 const PokerTable = () => {
-  // Mock data for demonstration
+  // Mock data for demonstration - שינוי התור כך שהשחקן הראשון יהיה בתור
   const [players, setPlayers] = useState([
     { id: 'player1', name: 'שחקן 1', chips: 1000, currentBet: 0, hand: ['A♠', 'K♠'], folded: false },
     { id: 'player2', name: 'שחקן 2', chips: 850, currentBet: 50, hand: ['Q♥', 'Q♦'], folded: false },
@@ -471,7 +481,7 @@ const PokerTable = () => {
   ]);
   
   const [dealerIndex, setDealerIndex] = useState(0);
-  const [currentTurn, setCurrentTurn] = useState(1);
+  const [currentTurn, setCurrentTurn] = useState(0); // שינוי ל-0 כך שהשחקן הראשון יהיה בתור
   const [currentBet, setCurrentBet] = useState(50);
   const [pot, setPot] = useState(150);
   const [stage, setStage] = useState('flop');
@@ -502,7 +512,8 @@ const PokerTable = () => {
            players.length > 0 && 
            currentTurn < players.length &&
            players[currentTurn] && 
-           players[currentTurn].id === mySocketId;
+           players[currentTurn].id === mySocketId &&
+           !players[currentTurn].folded;
   };
 
   const getCurrentPlayer = () => {
@@ -537,14 +548,46 @@ const PokerTable = () => {
 
   const handleAction = (action, amount = null) => {
     console.log(`Action: ${action}`, amount);
-    // כאן תהיה הלוגיקה לשליחה לשרת
-    setLog(prev => [`🎮 ${action}${amount ? ` (${amount})` : ''} (${getMyPlayer()?.name})`, ...prev]);
+    
+    // סימולציה של פעולה - עדכון הסטייטים
+    const myPlayer = getMyPlayer();
+    if (!myPlayer) return;
+
+    const newPlayers = [...players];
+    const myPlayerIndex = newPlayers.findIndex(p => p.id === mySocketId);
+    
+    if (action === 'Call') {
+      const callAmount = getCallAmount();
+      newPlayers[myPlayerIndex].currentBet += callAmount;
+      newPlayers[myPlayerIndex].chips -= callAmount;
+      setPot(prev => prev + callAmount);
+    } else if (action === 'Raise') {
+      const raiseTotal = amount || currentBet + 50;
+      const betDiff = raiseTotal - newPlayers[myPlayerIndex].currentBet;
+      newPlayers[myPlayerIndex].currentBet = raiseTotal;
+      newPlayers[myPlayerIndex].chips -= betDiff;
+      setPot(prev => prev + betDiff);
+      setCurrentBet(raiseTotal);
+    } else if (action === 'Fold') {
+      newPlayers[myPlayerIndex].folded = true;
+    }
+    
+    setPlayers(newPlayers);
+    
+    // מעבר לשחקן הבא
+    let nextTurn = (currentTurn + 1) % players.length;
+    while (nextTurn !== currentTurn && players[nextTurn]?.folded) {
+      nextTurn = (nextTurn + 1) % players.length;
+    }
+    setCurrentTurn(nextTurn);
+    
+    setLog(prev => [`🎮 ${action}${amount ? ` (${amount})` : ''} (${myPlayer.name})`, ...prev]);
   };
 
   const handleRaise = () => {
     if (!isRaising) {
       setIsRaising(true);
-      setRaiseAmount(String(currentBet + 1));
+      setRaiseAmount(String(currentBet + 50));
     } else {
       confirmRaise();
     }
@@ -638,34 +681,55 @@ const PokerTable = () => {
 
       <div className="actions-section">
         {isMyTurn() && (
+          <div className="my-turn-indicator">
+            🎯 זה התור שלך! בחר פעולה:
+          </div>
+        )}
+        
+        {gameStarted && !getMyPlayer()?.folded && (
           <div className="actions">
             <button 
               onClick={() => handleAction('Check')}
               disabled={!canCheck()}
-              style={{backgroundColor: canCheck() ? '#4CAF50' : '#ccc'}}
+              style={{
+                backgroundColor: canCheck() ? '#4CAF50' : '#ccc',
+                color: 'white'
+              }}
             >
-              Check
+              ✓ Check
             </button>
             <button 
               onClick={() => handleAction('Call')}
               disabled={!canCall()}
-              style={{backgroundColor: canCall() ? '#2196F3' : '#ccc'}}
+              style={{
+                backgroundColor: canCall() ? '#2196F3' : '#ccc',
+                color: 'white'
+              }}
             >
-              Call ({getCallAmount()})
+              📞 Call ({getCallAmount()})
             </button>
             <button 
               onClick={handleRaise}
-              style={{backgroundColor: canRaise() ? '#FF9800' : '#ccc'}}
+              style={{
+                backgroundColor: canRaise() ? '#FF9800' : '#ccc',
+                color: 'white'
+              }}
               disabled={!canRaise()}
             >
-              {isRaising ? 'בצע Raise' : 'Raise'}
+              {isRaising ? '✅ בצע Raise' : '⬆️ Raise'}
             </button>
             <button 
               onClick={() => handleAction('Fold')}
-              style={{backgroundColor: '#f44336'}}
+              style={{backgroundColor: '#f44336', color: 'white'}}
             >
-              Fold
+              ❌ Fold
             </button>
+          </div>
+        )}
+
+        {getMyPlayer()?.folded && (
+          <div style={{color: 'white', textAlign: 'center', padding: '20px'}}>
+            ❌ פרשת מהיד - חכה לסיבוב הבא
           </div>
         )}
       </div>
