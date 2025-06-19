@@ -30,7 +30,9 @@ function getTableData(tableId) {
       currentTurn: 0,
       communityCards: [],
       log: [],
-      players: []
+      players: [],
+      gameStarted: false,
+      currentRound: 'preflop' // preflop, flop, turn, river
     });
   }
   return tables.get(tableId);
@@ -38,6 +40,57 @@ function getTableData(tableId) {
 
 function getPlayersInTable(tableId) {
   return Array.from(players.values()).filter(p => p.tableId === tableId);
+}
+
+function getNextActivePlayer(tableId, currentPlayerIndex) {
+  const tablePlayers = getPlayersInTable(tableId);
+  let nextIndex = (currentPlayerIndex + 1) % tablePlayers.length;
+  let attempts = 0;
+  
+  // חיפוש השחקן הפעיל הבא (שלא עשה fold)
+  while (attempts < tablePlayers.length) {
+    const nextPlayer = tablePlayers[nextIndex];
+    if (nextPlayer && !nextPlayer.folded) {
+      return nextIndex;
+    }
+    nextIndex = (nextIndex + 1) % tablePlayers.length;
+    attempts++;
+  }
+  
+  return currentPlayerIndex; // אם לא נמצא שחקן פעיל, נשאר על הנוכחי
+}
+
+function checkIfRoundEnded(tableId) {
+  const tablePlayers = getPlayersInTable(tableId);
+  const activePlayers = tablePlayers.filter(p => !p.folded);
+  
+  if (activePlayers.length <= 1) {
+    return true; // סיום המשחק - רק שחקן אחד נותר
+  }
+  
+  // בדיקה אם כל השחקנים הפעילים הגיעו לאותו סכום הימור
+  const activeBets = activePlayers.map(p => p.currentBet);
+  const allBetsEqual = activeBets.every(bet => bet === activeBets[0]);
+  
+  return allBetsEqual;
+}
+
+function updateGameState(tableId) {
+  const tableData = getTableData(tableId);
+  const tablePlayers = getPlayersInTable(tableId);
+  
+  // עדכון השחקנים בטבלה
+  tableData.players = tablePlayers;
+  
+  io.to(tableId).emit('state-update', {
+    players: tablePlayers,
+    pot: tableData.pot,
+    currentTurn: tableData.currentTurn,
+    communityCards: tableData.communityCards,
+    log: tableData.log,
+    gameStarted: tableData.gameStarted,
+    currentRound: tableData.currentRound
+  });
 }
 
 io.on('connection', (socket) => {
@@ -64,27 +117,15 @@ io.on('connection', (socket) => {
         chips: 1000,
         hand: [],
         currentBet: 0,
-        folded: false
+        folded: false,
+        hasActed: false // האם השחקן פעל בסיבוב הנוכחי
       });
     }
 
-    const tablePlayers = getPlayersInTable(tableId);
-    
-    // עדכון הטבלה עם השחקנים
-    tableData.players = tablePlayers;
-    
-    console.log(`📊 שולחן ${tableId} עכשיו יש ${tablePlayers.length} שחקנים`);
-
-    io.to(tableId).emit('state-update', {
-      players: tablePlayers,
-      pot: tableData.pot,
-      currentTurn: tableData.currentTurn,
-      communityCards: tableData.communityCards,
-      log: tableData.log
-    });
+    updateGameState(tableId);
   });
 
-  socket.on('player-action', ({ tableId, action, playerId }) => {
+  socket.on('player-action', ({ tableId, action, playerId, amount }) => {
     const player = players.get(playerId);
     if (!player) {
       console.log(`❌ שחקן ${playerId} לא נמצא`);
@@ -92,21 +133,98 @@ io.on('connection', (socket) => {
     }
 
     const tableData = getTableData(tableId);
+    const tablePlayers = getPlayersInTable(tableId);
     
-    // הוספת פעולה ללוג
-    tableData.log.unshift(`🎮 ${player.name} עשה ${action}`);
+    // בדיקה שזה התור של השחקן
+    const currentPlayerIndex = tablePlayers.findIndex(p => p.id === playerId);
+    if (currentPlayerIndex !== tableData.currentTurn) {
+      console.log(`❌ לא התור של שחקן ${player.name}`);
+      return;
+    }
+
+    // טיפול בפעולות השונות
+    switch (action) {
+      case 'fold':
+        player.folded = true;
+        tableData.log.unshift(`🚪 ${player.name} עשה fold`);
+        break;
+        
+      case 'call':
+        // חישוב כמה צריך להוסיף להגעה לסכום הגבוה ביותר
+        const maxBet = Math.max(...tablePlayers.map(p => p.currentBet));
+        const callAmount = maxBet - player.currentBet;
+        if (player.chips >= callAmount) {
+          player.chips -= callAmount;
+          player.currentBet += callAmount;
+          tableData.pot += callAmount;
+          tableData.log.unshift(`📞 ${player.name} עשה call (${callAmount})`);
+        }
+        break;
+        
+      case 'raise':
+        const raiseAmount = amount || 50; // סכום ברירת מחדל
+        const currentMaxBet = Math.max(...tablePlayers.map(p => p.currentBet));
+        const totalBetAmount = currentMaxBet + raiseAmount;
+        const playerNeedsToPay = totalBetAmount - player.currentBet;
+        
+        if (player.chips >= playerNeedsToPay) {
+          player.chips -= playerNeedsToPay;
+          tableData.pot += playerNeedsToPay;
+          player.currentBet = totalBetAmount;
+          tableData.log.unshift(`📈 ${player.name} עשה raise ל-${totalBetAmount}`);
+          
+          // איפוס hasActed לכל השחקנים כי יש הימור חדש
+          tablePlayers.forEach(p => {
+            if (p.id !== playerId) {
+              p.hasActed = false;
+            }
+          });
+        }
+        break;
+        
+      case 'check':
+        tableData.log.unshift(`✅ ${player.name} עשה check`);
+        break;
+    }
+
+    // סימון שהשחקן פעל
+    player.hasActed = true;
+    players.set(playerId, player);
     
     console.log(`🎯 שחקן ${player.name} עשה ${action}`);
 
-    const tablePlayers = getPlayersInTable(tableId);
+    // מעבר לשחקן הבא
+    if (!checkIfRoundEnded(tableId)) {
+      tableData.currentTurn = getNextActivePlayer(tableId, tableData.currentTurn);
+    } else {
+      // סיום הסיבוב - עבור לשלב הבא או סיים את המשחק
+      const activePlayers = tablePlayers.filter(p => !p.folded);
+      if (activePlayers.length === 1) {
+        // שחקן אחד נותר - הוא זוכה
+        const winner = activePlayers[0];
+        winner.chips += tableData.pot;
+        tableData.log.unshift(`🏆 ${winner.name} זכה בסיבוב! (+${tableData.pot})`);
+        tableData.pot = 0;
+        tableData.gameStarted = false;
+        // איפוס למצב התחלתי
+        tablePlayers.forEach(p => {
+          p.currentBet = 0;
+          p.folded = false;
+          p.hasActed = false;
+          p.hand = [];
+        });
+        tableData.communityCards = [];
+        tableData.currentRound = 'preflop';
+      } else {
+        // איפוס hasActed לסיבוב הבא
+        tablePlayers.forEach(p => {
+          p.hasActed = false;
+        });
+        tableData.currentTurn = 0;
+      }
+    }
 
-    io.to(tableId).emit('state-update', {
-      players: tablePlayers,
-      pot: tableData.pot,
-      currentTurn: tableData.currentTurn,
-      communityCards: tableData.communityCards,
-      log: tableData.log
-    });
+    updateGameState(tableId);
   });
 
   socket.on('start-game', (tableId) => {
@@ -135,6 +253,7 @@ io.on('connection', (socket) => {
       player.hand = hand;
       player.currentBet = 0;
       player.folded = false;
+      player.hasActed = false;
       players.set(player.id, player); // עדכון במפה
     });
 
@@ -143,15 +262,11 @@ io.on('connection', (socket) => {
     tableData.communityCards = communityCards;
     tableData.pot = 0;
     tableData.currentTurn = 0;
+    tableData.gameStarted = true;
+    tableData.currentRound = 'preflop';
     tableData.log = [`🎬 התחלת משחק!`];
 
-    io.to(tableId).emit('state-update', {
-      players: tablePlayers,
-      pot: 0,
-      currentTurn: 0,
-      communityCards: communityCards,
-      log: [`🎬 התחלת משחק!`]
-    });
+    updateGameState(tableId);
   });
 
   socket.on('disconnect', () => {
@@ -165,15 +280,17 @@ io.on('connection', (socket) => {
       
       // עדכון לשחקנים הנותרים בשולחן
       const tableData = getTableData(player.tableId);
-      const remainingPlayers = getPlayersInTable(player.tableId);
+      tableData.log.unshift(`🚪 ${player.name} עזב את השולחן`);
       
-      io.to(player.tableId).emit('state-update', {
-        players: remainingPlayers,
-        pot: tableData.pot,
-        currentTurn: tableData.currentTurn,
-        communityCards: tableData.communityCards,
-        log: [...tableData.log, `🚪 ${player.name} עזב את השולחן`]
-      });
+      // אם השחקן שעזב היה בתור שלו, עבור לשחקן הבא
+      const remainingPlayers = getPlayersInTable(player.tableId);
+      if (remainingPlayers.length > 0 && tableData.gameStarted) {
+        if (tableData.currentTurn >= remainingPlayers.length) {
+          tableData.currentTurn = 0;
+        }
+      }
+      
+      updateGameState(player.tableId);
     }
   });
 });

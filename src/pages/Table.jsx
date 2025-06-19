@@ -78,11 +78,12 @@ function Table() {
     const [timeLeft, setTimeLeft] = useState(180);
     const [showAllCards, setShowAllCards] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
-    const [firstPlayerJoined, setFirstPlayerJoined] = useState(null); // שמירה של השחקן הראשון
+    const [gameStarted, setGameStarted] = useState(false); // הוספת state למשחק שהתחיל
     const socket = useRef(null);
 
     const startGame = () => {
         if (socket.current && socket.current.connected) {
+            console.log('Starting game...');
             socket.current.emit('start-game', tableId);
         } else {
             console.error('Socket not connected');
@@ -130,9 +131,11 @@ function Table() {
                 setStage(tableData.stage || 'pre-flop');
                 setDealerIndex(tableData.dealerIndex || 0);
                 
-                // שמירה של השחקן הראשון שהצטרף
-                if (tableData.players && tableData.players.length > 0 && !firstPlayerJoined) {
-                    setFirstPlayerJoined(tableData.players[0].id);
+                // בדיקה אם המשחק התחיל (אם יש קלפים בקהילה או שחקנים יש להם קלפים)
+                if (tableData.communityCards && tableData.communityCards.length > 0) {
+                    setGameStarted(true);
+                } else if (tableData.players && tableData.players.some(p => p.hand && p.hand.length > 0)) {
+                    setGameStarted(true);
                 }
             }
         });
@@ -157,24 +160,27 @@ function Table() {
                 socket.current.disconnect();
             }
         };
-    }, [tableId, firstPlayerJoined]);
+    }, [tableId]);
 
+    // Timer effect - רק אם המשחק התחיל
     useEffect(() => {
-        if (players.length === 0) return;
+        if (!gameStarted || players.length === 0) return;
         
         setTimeLeft(180);
         const interval = setInterval(() => {
             setTimeLeft(prev => {
                 if (prev <= 1) {
                     clearInterval(interval);
-                    handleAction('Fold');
+                    if (isMyTurn()) {
+                        handleAction('Fold');
+                    }
                     return 0;
                 }
                 return prev - 1;
             });
         }, 1000);
         return () => clearInterval(interval);
-    }, [currentTurn, players.length]);
+    }, [currentTurn, players.length, gameStarted]);
 
     const checkForSingleRemaining = () => {
         const remaining = players.filter(p => !p.folded);
@@ -288,7 +294,7 @@ function Table() {
         setPlayers(reset);
         setCurrentBet(0);
         setLog(prev => [`⭐ עוברים לשלב הבא`, ...prev]);
-        const next = getNextActivePlayer(currentTurn);
+        const next = getNextActivePlayer(dealerIndex);
         setCurrentTurn(next);
         setBettingStartIndex(next);
         advanceStage();
@@ -300,6 +306,13 @@ function Table() {
             resetBetsForNextRound();
         } else {
             setCurrentTurn(next);
+            // שליחת עדכון תור לשרת
+            if (socket.current && socket.current.connected) {
+                socket.current.emit('turn-update', {
+                    tableId,
+                    currentTurn: next
+                });
+            }
         }
     };
 
@@ -348,7 +361,8 @@ function Table() {
                 tableId,
                 action,
                 playerId: player.id,
-                playerName: player.name
+                playerName: player.name,
+                currentTurn: getNextActivePlayer(currentTurn) // שליחת התור הבא
             });
         }
         
@@ -388,7 +402,8 @@ function Table() {
     };
 
     const isMyTurn = () => {
-        return players.length > 0 && 
+        return gameStarted && 
+               players.length > 0 && 
                currentTurn < players.length &&
                players[currentTurn] && 
                players[currentTurn].id === mySocketId.current;
@@ -401,7 +416,7 @@ function Table() {
 
     // בדיקה אם המשתמש הוא השחקן הראשון שהצטרף
     const isFirstPlayer = () => {
-        return mySocketId.current === firstPlayerJoined;
+        return players.length > 0 && players[0] && players[0].id === mySocketId.current;
     };
 
     return (
@@ -419,8 +434,8 @@ function Table() {
             <div className="debug-info" style={{fontSize: '12px', marginBottom: '10px', backgroundColor: '#f0f0f0', padding: '10px'}}>
                 <div>מספר שחקנים: {players.length}</div>
                 <div>Socket ID: {mySocketId.current}</div>
-                <div>First Player ID: {firstPlayerJoined}</div>
                 <div>האם אני השחקן הראשון? {isFirstPlayer() ? 'כן' : 'לא'}</div>
+                <div>משחק התחיל? {gameStarted ? 'כן' : 'לא'}</div>
                 <div>תור נוכחי: {currentTurn} {getCurrentPlayer() ? `(${getCurrentPlayer().name})` : '(לא מוגדר)'}</div>
                 <div>זה התור שלי? {isMyTurn() ? 'כן' : 'לא'}</div>
                 <div>שלב: {stage}</div>
@@ -449,7 +464,7 @@ function Table() {
                             </div>
                             <div className="player-chips">💵 {player.chips}</div>
                             <div className="player-bet">💸 {player.currentBet}</div>
-                            {index === currentTurn && !player.folded && (
+                            {index === currentTurn && !player.folded && gameStarted && (
                                 <>
                                     <div className="turn-indicator">🎯</div>
                                     <div className="timer">⏱️ {timeLeft}s</div>
@@ -513,8 +528,8 @@ function Table() {
                 )}
             </div>
 
-            {/* כפתור התחלת משחק - רק לשחקן הראשון */}
-            {players.length >= 2 && isFirstPlayer() && (
+            {/* כפתור התחלת משחק - רק לשחקן הראשון וכשלא התחיל עדיין */}
+            {players.length >= 2 && isFirstPlayer() && !gameStarted && (
                 <div className="start-game-button">
                     <button onClick={startGame} disabled={!isConnected}>
                         🎬 התחל משחק
@@ -538,7 +553,7 @@ function Table() {
                         type="number"
                         min={currentBet + 1}
                         max={players[currentTurn]?.chips + players[currentTurn]?.currentBet}
-                        placeholder="סכום רייז"
+                        placeholder="סכום רייز"
                         value={raiseAmount}
                         onChange={(e) => setRaiseAmount(e.target.value)}
                     />
