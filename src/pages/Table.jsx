@@ -100,8 +100,10 @@ function Table() {
         
             const isAlreadySeated = tableData.players.some(p => p.id === socket.current.id);
             if (!isAlreadySeated) {
-                socket.current.emit('join-table', tableId);
-            }
+                socket.current.on('connect', () => {
+                    mySocketId.current = socket.current.id;
+                    socket.current.emit('join-table', tableId); // רק אחרי שיש socket.id!
+                  });            }
         });
 
         socket.current.on('action-update', (data) => {

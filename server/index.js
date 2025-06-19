@@ -44,6 +44,7 @@ io.on('connection', (socket) => {
     );
 
     if (existing.length === 0) {
+      console.log(`➕ מוסיף שחקן חדש עם id ${socket.id} לשולחן ${tableId}`);
       const [count] = await conn.execute(
         `SELECT COUNT(*) AS count FROM players WHERE tableId = ?`,
         [tableId]
