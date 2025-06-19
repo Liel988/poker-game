@@ -6,18 +6,6 @@ import { io } from 'socket.io-client';
 const suits = ['♠', '♥', '♦', '♣'];
 const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 const rankValue = Object.fromEntries(ranks.map((r, i) => [r, i + 2]));
-const smallBlind = 5;
-const bigBlind = 10;
-
-const generateDeck = () => {
-    const deck = [];
-    for (let suit of suits) {
-        for (let rank of ranks) {
-            deck.push(`${rank}${suit}`);
-        }
-    }
-    return deck.sort(() => Math.random() - 0.5);
-};
 
 function evaluateHand(cards) {
     const values = cards.map(c => c.slice(0, -1));
@@ -63,22 +51,25 @@ function evaluateHand(cards) {
 function Table() {
     const mySocketId = useRef(null);
     const { tableId } = useParams();
+    
+    // States שמתעדכנים רק מהשרת
     const [players, setPlayers] = useState([]);
     const [dealerIndex, setDealerIndex] = useState(0);
     const [currentTurn, setCurrentTurn] = useState(0);
     const [currentBet, setCurrentBet] = useState(0);
     const [pot, setPot] = useState(0);
     const [log, setLog] = useState([]);
-    const [isRaising, setIsRaising] = useState(false);
-    const [raiseAmount, setRaiseAmount] = useState('');
     const [stage, setStage] = useState('pre-flop');
     const [communityCards, setCommunityCards] = useState([]);
-    const [deck, setDeck] = useState([]);
-    const [bettingStartIndex, setBettingStartIndex] = useState(0);
+    const [gameStarted, setGameStarted] = useState(false);
+    
+    // States מקומיים לUI בלבד
+    const [isRaising, setIsRaising] = useState(false);
+    const [raiseAmount, setRaiseAmount] = useState('');
     const [timeLeft, setTimeLeft] = useState(180);
     const [showAllCards, setShowAllCards] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
-    const [gameStarted, setGameStarted] = useState(false); // הוספת state למשחק שהתחיל
+    
     const socket = useRef(null);
 
     const startGame = () => {
@@ -105,7 +96,6 @@ function Table() {
             console.log('Connected to server');
             setIsConnected(true);
             mySocketId.current = socket.current.id;
-            // הצטרפות לשולחן מיד אחרי החיבור
             socket.current.emit('join-table', tableId);
         });
 
@@ -119,39 +109,50 @@ function Table() {
             setIsConnected(false);
         });
 
+        // עדכון מצב מלא מהשרת
         socket.current.on('state-update', (tableData) => {
             console.log('State update received:', tableData);
             if (tableData) {
                 setPlayers(tableData.players || []);
                 setPot(tableData.pot || 0);
                 setLog(tableData.log || []);
-                setCurrentTurn(tableData.currentTurn || 0);
+                setCurrentTurn(tableData.currentTurn !== undefined ? tableData.currentTurn : 0);
                 setCommunityCards(tableData.communityCards || []);
                 setCurrentBet(tableData.currentBet || 0);
                 setStage(tableData.stage || 'pre-flop');
                 setDealerIndex(tableData.dealerIndex || 0);
+                setGameStarted(tableData.gameStarted || false);
                 
-                // בדיקה אם המשחק התחיל (אם יש קלפים בקהילה או שחקנים יש להם קלפים)
-                if (tableData.communityCards && tableData.communityCards.length > 0) {
-                    setGameStarted(true);
-                } else if (tableData.players && tableData.players.some(p => p.hand && p.hand.length > 0)) {
-                    setGameStarted(true);
+                // איפוס הטיימר כשיש עדכון תור
+                if (tableData.currentTurn !== undefined) {
+                    setTimeLeft(180);
                 }
             }
         });
 
+        // עדכון פעולה ספציפי
         socket.current.on('action-update', (data) => {
             console.log('Action update received:', data);
-            if (data && data.type === 'update-state') {
-                setPlayers(data.players || []);
-                setPot(data.pot || 0);
-                setCurrentTurn(data.currentTurn || 0);
-                setCommunityCards(data.communityCards || []);
-                setCurrentBet(data.currentBet || 0);
+            if (data) {
+                // עדכון הלוג עם הפעולה החדשה
                 if (data.action && data.playerName) {
-                    setLog(prev => [`🎮 פעולה: ${data.action} (${data.playerName})`, ...prev]);
+                    setLog(prev => [`🎮 ${data.action} (${data.playerName})`, ...prev]);
                 }
             }
+        });
+
+        // עדכון לוג
+        socket.current.on('log-update', (logEntry) => {
+            console.log('Log update received:', logEntry);
+            if (logEntry) {
+                setLog(prev => [logEntry, ...prev]);
+            }
+        });
+
+        // הודעת שגיאה
+        socket.current.on('error', (error) => {
+            console.error('Server error:', error);
+            setLog(prev => [`❌ שגיאה: ${error}`, ...prev]);
         });
 
         // ניקוי בעת unmount
@@ -162,238 +163,80 @@ function Table() {
         };
     }, [tableId]);
 
-    // Timer effect - רק אם המשחק התחיל
+    // Timer effect - רק עבור התור שלי
     useEffect(() => {
-        if (!gameStarted || players.length === 0) return;
+        if (!gameStarted || !isMyTurn()) {
+            return;
+        }
         
-        setTimeLeft(180);
         const interval = setInterval(() => {
             setTimeLeft(prev => {
                 if (prev <= 1) {
                     clearInterval(interval);
-                    if (isMyTurn()) {
-                        handleAction('Fold');
-                    }
+                    handleAction('Fold');
                     return 0;
                 }
                 return prev - 1;
             });
         }, 1000);
+        
         return () => clearInterval(interval);
-    }, [currentTurn, players.length, gameStarted]);
+    }, [currentTurn, gameStarted, players]);
 
-    const checkForSingleRemaining = () => {
-        const remaining = players.filter(p => !p.folded);
-        if (remaining.length === 1) {
-            const winner = remaining[0];
-            const updated = players.map(p => ({
-                ...p,
-                chips: p.id === winner.id ? p.chips + pot : p.chips,
-                currentBet: 0
-            }));
-            setPlayers(updated);
-            setLog(prev => [`🏆 ${winner.name} זכה כי כולם פרשו`, ...prev]);
-            setPot(0);
-            setTimeout(() => startNewHand(updated), 4000);
-            return true;
-        }
-        return false;
-    };
-
-    const startNewHand = (prevPlayers) => {
-        const newDeck = generateDeck();
-        const updatedPlayers = prevPlayers.map(p => ({
-            ...p,
-            currentBet: 0,
-            folded: false,
-            hand: [newDeck.pop(), newDeck.pop()]
-        }));
-
-        const sbIndex = (dealerIndex + 1) % updatedPlayers.length;
-        const bbIndex = (dealerIndex + 2) % updatedPlayers.length;
-        updatedPlayers[sbIndex].chips -= smallBlind;
-        updatedPlayers[sbIndex].currentBet = smallBlind;
-        updatedPlayers[bbIndex].chips -= bigBlind;
-        updatedPlayers[bbIndex].currentBet = bigBlind;
-
-        const flop = [newDeck.pop(), newDeck.pop(), newDeck.pop()];
-        const turn = [newDeck.pop()];
-        const river = [newDeck.pop()];
-
-        setPlayers(updatedPlayers);
-        setCommunityCards([...flop, ...turn, ...river]);
-        setDeck(newDeck);
-        setCurrentBet(bigBlind);
-        setPot(smallBlind + bigBlind);
-        setLog(['✨ התחלה חדשה']);
-        setStage('pre-flop');
-        const first = (dealerIndex + 3) % updatedPlayers.length;
-        setCurrentTurn(first);
-        setBettingStartIndex(first);
-        setDealerIndex((dealerIndex + 1) % updatedPlayers.length);
-    };
-
-    const getNextActivePlayer = (fromIndex = currentTurn) => {
-        if (players.length === 0) return 0;
-        let index = fromIndex, attempts = 0;
-        do {
-            index = (index + 1) % players.length;
-            attempts++;
-        } while (players[index]?.folded && attempts < players.length);
-        return index;
-    };
-
-    const isBettingRoundOver = (nextIndex) => {
-        const active = players.filter(p => !p.folded && p.chips > 0);
-        const allCalled = active.every(p => p.currentBet === currentBet);
-        return allCalled && nextIndex === bettingStartIndex;
-    };
-
-    const advanceStage = () => {
-        if (stage === 'pre-flop') setStage('flop');
-        else if (stage === 'flop') setStage('turn');
-        else if (stage === 'turn') setStage('river');
-        else determineWinner();
-    };
-
-    const determineWinner = () => {
-        const active = players.filter(p => !p.folded);
-        const scores = active.map(p => {
-            const result = evaluateHand([...p.hand, ...communityCards]);
-            return { player: p, ...result };
-        });
-        const maxScore = Math.max(...scores.map(s => s.score));
-        const top = scores.filter(s => s.score === maxScore);
-        const maxBest = Math.max(...top.map(s => s.best));
-        const winners = top.filter(s => s.best === maxBest);
-        const share = Math.floor(pot / winners.length);
-
-        const updated = players.map(p => {
-            const win = winners.find(w => w.player.id === p.id);
-            return {
-                ...p,
-                chips: win ? p.chips + share : p.chips - p.currentBet,
-                currentBet: 0
-            };
-        });
-
-        setPlayers(updated);
-        const names = winners.map(w => `${w.player.name} (${w.handName})`).join(', ');
-        setLog(prev => [
-            winners.length === 1
-                ? `🏆 ${names} זכה בקופה`
-                : `🤝 תיקו! ${names} חלקו את הקופה`,
-            ...prev
-        ]);
-        setPot(0);
-        setTimeout(() => startNewHand(updated), 5000);
-    };
-
-    const resetBetsForNextRound = () => {
-        const reset = players.map(p => ({ ...p, currentBet: 0 }));
-        setPlayers(reset);
-        setCurrentBet(0);
-        setLog(prev => [`⭐ עוברים לשלב הבא`, ...prev]);
-        const next = getNextActivePlayer(dealerIndex);
-        setCurrentTurn(next);
-        setBettingStartIndex(next);
-        advanceStage();
-    };
-
-    const nextTurn = () => {
-        const next = getNextActivePlayer(currentTurn);
-        if (isBettingRoundOver(next)) {
-            resetBetsForNextRound();
-        } else {
-            setCurrentTurn(next);
-            // שליחת עדכון תור לשרת
-            if (socket.current && socket.current.connected) {
-                socket.current.emit('turn-update', {
-                    tableId,
-                    currentTurn: next
-                });
-            }
-        }
-    };
-
-    const handleAction = (action) => {
-        console.log(`Attempting action: ${action}, isMyTurn: ${isMyTurn()}, currentPlayer:`, getCurrentPlayer());
+    // פונקציה לשליחת פעולה לשרת בלבד
+    const handleAction = (action, amount = null) => {
+        console.log(`Attempting action: ${action}, isMyTurn: ${isMyTurn()}`);
         
         if (!isMyTurn()) {
             console.log('Not my turn, ignoring action');
             return;
         }
 
-        const updated = [...players];
-        const player = updated[currentTurn];
-
-        if (!player || player.folded) {
-            console.log('Player not found or folded');
-            return nextTurn();
-        }
-
-        if (action === 'Fold') {
-            player.folded = true;
-            setLog(prev => [`${player.name} פרש ❌`, ...prev]);
-        } else if (action === 'Call') {
-            const toCall = currentBet - player.currentBet;
-            const callAmount = Math.min(toCall, player.chips);
-            player.chips -= callAmount;
-            player.currentBet += callAmount;
-            setPot(prev => prev + callAmount);
-            setLog(prev => [`${player.name} השווה ${callAmount} ₪`, ...prev]);
-        } else if (action === 'Raise') {
-            setIsRaising(true);
+        if (!socket.current || !socket.current.connected) {
+            console.error('Socket not connected');
             return;
-        } else if (action === 'Check') {
-            if (player.currentBet === currentBet) {
-                setLog(prev => [`${player.name} עשה Check`, ...prev]);
-            } else {
-                setLog(prev => [`${player.name} לא יכול Check ❌`, ...prev]);
-                return;
-            }
         }
-        
-        setPlayers(updated);
-        
-        if (socket.current && socket.current.connected) {
-            socket.current.emit('player-action', {
-                tableId,
-                action,
-                playerId: player.id,
-                playerName: player.name,
-                currentTurn: getNextActivePlayer(currentTurn) // שליחת התור הבא
-            });
+
+        // שליחת הפעולה לשרת
+        const actionData = {
+            tableId,
+            action,
+            playerId: mySocketId.current
+        };
+
+        if (action === 'Raise' && amount) {
+            actionData.amount = parseInt(amount);
         }
-        
-        if (checkForSingleRemaining()) return;
-        nextTurn();
+
+        console.log('Sending action to server:', actionData);
+        socket.current.emit('player-action', actionData);
+
+        // איפוס UI של raise
+        if (isRaising) {
+            setIsRaising(false);
+            setRaiseAmount('');
+        }
     };
 
     const confirmRaise = () => {
         const amount = parseInt(raiseAmount);
-        const updated = [...players];
-        const player = updated[currentTurn];
-
-        if (!player || isNaN(amount) || amount <= currentBet || amount > player.chips + player.currentBet) {
-            setLog(prev => [`סכום רייז לא תקין ❌`, ...prev]);
+        const currentPlayer = getCurrentPlayer();
+        
+        if (!currentPlayer || isNaN(amount) || amount <= currentBet) {
+            setLog(prev => ['❌ סכום רייז לא תקין', ...prev]);
             return;
         }
 
-        const toCall = Math.min(amount - player.currentBet, player.chips);
-        player.currentBet += toCall;
-        player.chips -= toCall;
-        setCurrentBet(amount);
-        setPot(prev => prev + toCall);
-        setPlayers(updated);
-        setIsRaising(false);
-        setRaiseAmount('');
-        setLog(prev => [`${player.name} העלה ל-${amount} ₪`, ...prev]);
-        const next = getNextActivePlayer(currentTurn);
-        setCurrentTurn(next);
-        setBettingStartIndex(next);
+        const maxRaise = currentPlayer.chips + currentPlayer.currentBet;
+        if (amount > maxRaise) {
+            setLog(prev => ['❌ אין לך מספיק כסף לרייז כזה', ...prev]);
+            return;
+        }
+
+        handleAction('Raise', amount);
     };
 
+    // פונקציות עזר שרק קוראות מה-state
     const getVisibleCommunityCards = () => {
         if (stage === 'pre-flop') return [];
         if (stage === 'flop') return communityCards.slice(0, 3);
@@ -414,9 +257,28 @@ function Table() {
         return players[currentTurn];
     };
 
-    // בדיקה אם המשתמש הוא השחקן הראשון שהצטרף
     const isFirstPlayer = () => {
         return players.length > 0 && players[0] && players[0].id === mySocketId.current;
+    };
+
+    const getMyPlayer = () => {
+        return players.find(p => p.id === mySocketId.current);
+    };
+
+    const canCheck = () => {
+        const myPlayer = getMyPlayer();
+        return myPlayer && myPlayer.currentBet === currentBet;
+    };
+
+    const canCall = () => {
+        const myPlayer = getMyPlayer();
+        return myPlayer && myPlayer.currentBet < currentBet && myPlayer.chips > 0;
+    };
+
+    const getCallAmount = () => {
+        const myPlayer = getMyPlayer();
+        if (!myPlayer) return 0;
+        return Math.min(currentBet - myPlayer.currentBet, myPlayer.chips);
     };
 
     return (
@@ -440,6 +302,9 @@ function Table() {
                 <div>זה התור שלי? {isMyTurn() ? 'כן' : 'לא'}</div>
                 <div>שלב: {stage}</div>
                 <div>הימור נוכחי: {currentBet}</div>
+                <div>יכול Check? {canCheck() ? 'כן' : 'לא'}</div>
+                <div>יכול Call? {canCall() ? 'כן' : 'לא'}</div>
+                <div>סכום Call: {getCallAmount()}</div>
             </div>
 
             <div className="poker-table">
@@ -467,7 +332,9 @@ function Table() {
                             {index === currentTurn && !player.folded && gameStarted && (
                                 <>
                                     <div className="turn-indicator">🎯</div>
-                                    <div className="timer">⏱️ {timeLeft}s</div>
+                                    {isMyTurn() && (
+                                        <div className="timer">⏱️ {timeLeft}s</div>
+                                    )}
                                 </>
                             )}
                             {index === dealerIndex && (
@@ -500,21 +367,22 @@ function Table() {
                     <div className="actions">
                         <button 
                             onClick={() => handleAction('Check')}
-                            disabled={getCurrentPlayer()?.currentBet !== currentBet}
-                            style={{backgroundColor: getCurrentPlayer()?.currentBet === currentBet ? 'lightgreen' : 'lightgray'}}
+                            disabled={!canCheck()}
+                            style={{backgroundColor: canCheck() ? 'lightgreen' : 'lightgray'}}
                         >
                             Check
                         </button>
                         <button 
                             onClick={() => handleAction('Call')}
-                            disabled={getCurrentPlayer()?.currentBet === currentBet}
-                            style={{backgroundColor: getCurrentPlayer()?.currentBet !== currentBet ? 'lightblue' : 'lightgray'}}
+                            disabled={!canCall()}
+                            style={{backgroundColor: canCall() ? 'lightblue' : 'lightgray'}}
                         >
-                            Call ({currentBet - (getCurrentPlayer()?.currentBet || 0)})
+                            Call ({getCallAmount()})
                         </button>
                         <button 
                             onClick={() => handleAction('Raise')}
                             style={{backgroundColor: 'orange'}}
+                            disabled={!getMyPlayer() || getMyPlayer().chips <= 0}
                         >
                             Raise
                         </button>
@@ -552,8 +420,8 @@ function Table() {
                     <input
                         type="number"
                         min={currentBet + 1}
-                        max={players[currentTurn]?.chips + players[currentTurn]?.currentBet}
-                        placeholder="סכום רייز"
+                        max={getMyPlayer() ? getMyPlayer().chips + getMyPlayer().currentBet : 0}
+                        placeholder="סכום רייז"
                         value={raiseAmount}
                         onChange={(e) => setRaiseAmount(e.target.value)}
                     />
