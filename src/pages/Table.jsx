@@ -93,7 +93,10 @@ function Table() {
         socket.current = io('https://poker-game-1.onrender.com', {
             transports: ['websocket', 'polling'],
             timeout: 20000,
-            forceNew: true
+            forceNew: true,
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
         });
 
         socket.current.on('connect', () => {
@@ -291,10 +294,20 @@ function Table() {
     };
 
     const handleAction = (action) => {
+        console.log(`Attempting action: ${action}, isMyTurn: ${isMyTurn()}, currentPlayer:`, getCurrentPlayer());
+        
+        if (!isMyTurn()) {
+            console.log('Not my turn, ignoring action');
+            return;
+        }
+
         const updated = [...players];
         const player = updated[currentTurn];
 
-        if (!player || player.folded) return nextTurn();
+        if (!player || player.folded) {
+            console.log('Player not found or folded');
+            return nextTurn();
+        }
 
         if (action === 'Fold') {
             player.folded = true;
@@ -366,8 +379,14 @@ function Table() {
 
     const isMyTurn = () => {
         return players.length > 0 && 
+               currentTurn < players.length &&
                players[currentTurn] && 
                players[currentTurn].id === mySocketId.current;
+    };
+
+    const getCurrentPlayer = () => {
+        if (players.length === 0 || currentTurn >= players.length) return null;
+        return players[currentTurn];
     };
 
     return (
@@ -382,10 +401,13 @@ function Table() {
             </div>
 
             {/* Debug info */}
-            <div className="debug-info" style={{fontSize: '12px', marginBottom: '10px'}}>
+            <div className="debug-info" style={{fontSize: '12px', marginBottom: '10px', backgroundColor: '#f0f0f0', padding: '10px'}}>
                 <div>מספר שחקנים: {players.length}</div>
                 <div>Socket ID: {mySocketId.current}</div>
-                <div>תור נוכחי: {currentTurn}</div>
+                <div>תור נוכחי: {currentTurn} {getCurrentPlayer() ? `(${getCurrentPlayer().name})` : '(לא מוגדר)'}</div>
+                <div>זה התור שלי? {isMyTurn() ? 'כן' : 'לא'}</div>
+                <div>שלב: {stage}</div>
+                <div>הימור נוכחי: {currentBet}</div>
             </div>
 
             <div className="poker-table">
@@ -437,25 +459,42 @@ function Table() {
                 <div className="stage-display">שלב: {stage}</div>
             </div>
 
-            {/* כפתורי פעולה */}
-            {isMyTurn() && (
-                <div className="actions">
-                    <button 
-                        onClick={() => handleAction('Check')}
-                        disabled={players[currentTurn]?.currentBet !== currentBet}
-                    >
-                        Check
-                    </button>
-                    <button 
-                        onClick={() => handleAction('Call')}
-                        disabled={players[currentTurn]?.currentBet === currentBet}
-                    >
-                        Call ({currentBet - (players[currentTurn]?.currentBet || 0)})
-                    </button>
-                    <button onClick={() => handleAction('Raise')}>Raise</button>
-                    <button onClick={() => handleAction('Fold')}>Fold</button>
+            {/* כפתורי פעולה - עם debug */}
+            <div className="actions-section">
+                <div style={{fontSize: '12px', marginBottom: '5px'}}>
+                    כפתורי פעולה: {isMyTurn() ? 'מוצגים (התור שלך)' : 'מוסתרים (לא התור שלך)'}
                 </div>
-            )}
+                {isMyTurn() && (
+                    <div className="actions">
+                        <button 
+                            onClick={() => handleAction('Check')}
+                            disabled={getCurrentPlayer()?.currentBet !== currentBet}
+                            style={{backgroundColor: getCurrentPlayer()?.currentBet === currentBet ? 'lightgreen' : 'lightgray'}}
+                        >
+                            Check
+                        </button>
+                        <button 
+                            onClick={() => handleAction('Call')}
+                            disabled={getCurrentPlayer()?.currentBet === currentBet}
+                            style={{backgroundColor: getCurrentPlayer()?.currentBet !== currentBet ? 'lightblue' : 'lightgray'}}
+                        >
+                            Call ({currentBet - (getCurrentPlayer()?.currentBet || 0)})
+                        </button>
+                        <button 
+                            onClick={() => handleAction('Raise')}
+                            style={{backgroundColor: 'orange'}}
+                        >
+                            Raise
+                        </button>
+                        <button 
+                            onClick={() => handleAction('Fold')}
+                            style={{backgroundColor: 'lightcoral'}}
+                        >
+                            Fold
+                        </button>
+                    </div>
+                )}
+            </div>
 
             {/* כפתור התחלת משחק */}
             {players.length >= 2 && (
@@ -466,14 +505,12 @@ function Table() {
                 </div>
             )}
 
-            {/* כפתור הצגת כל הקלפים */}
-            {players.length > 0 && (
-                <div className="show-cards-toggle">
-                    <button onClick={() => setShowAllCards(prev => !prev)}>
-                        {showAllCards ? 'הסתר קלפים' : 'הצג את כל הקלפים'}
-                    </button>
-                </div>
-            )}
+            {/* כפתור הצגת כל הקלפים - תמיד מוצג */}
+            <div className="show-cards-toggle">
+                <button onClick={() => setShowAllCards(prev => !prev)}>
+                    {showAllCards ? '🙈 הסתר קלפים של כולם' : '👀 הצג קלפים של כולם'}
+                </button>
+            </div>
 
             {/* Raise input */}
             {isRaising && (
