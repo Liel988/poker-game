@@ -4,7 +4,7 @@ const suits = ['♠', '♥', '♦', '♣'];
 const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 const rankValue = Object.fromEntries(ranks.map((r, i) => [r, i + 2]));
 
-// קומפוננטת קלף משופרת
+// קומפוננטת קלף
 const Card = ({ card, hidden = false, size = 'normal' }) => {
   if (!card || hidden) {
     return (
@@ -391,20 +391,6 @@ const styles = `
     border-bottom: 1px solid rgba(255,255,255,0.1);
   }
 
-  .debug-info {
-    background: rgba(240, 240, 240, 0.9);
-    padding: 10px;
-    margin: 10px auto;
-    border-radius: 8px;
-    font-size: 12px;
-    max-width: 800px;
-    direction: ltr;
-  }
-
-  .debug-info div {
-    margin: 5px 0;
-  }
-
   .raise-modal {
     position: fixed;
     top: 50%;
@@ -473,31 +459,21 @@ const styles = `
 `;
 
 const PokerTable = () => {
-  // Mock data for demonstration - שינוי התור כך שהשחקן הראשון יהיה בתור
-  const [players, setPlayers] = useState([
-    { id: 'player1', name: 'שחקן 1', chips: 1000, currentBet: 0, hand: ['A♠', 'K♠'], folded: false },
-    { id: 'player2', name: 'שחקן 2', chips: 850, currentBet: 50, hand: ['Q♥', 'Q♦'], folded: false },
-    { id: 'player3', name: 'שחקן 3', chips: 1200, currentBet: 0, hand: ['J♣', '10♣'], folded: true },
-  ]);
-  
+  // State variables - ריקים לחיבור לשרת אמיתי
+  const [players, setPlayers] = useState([]);
   const [dealerIndex, setDealerIndex] = useState(0);
-  const [currentTurn, setCurrentTurn] = useState(0); // שינוי ל-0 כך שהשחקן הראשון יהיה בתור
-  const [currentBet, setCurrentBet] = useState(50);
-  const [pot, setPot] = useState(150);
-  const [stage, setStage] = useState('flop');
-  const [communityCards, setCommunityCards] = useState(['A♦', 'K♣', 'Q♠', 'J♥', '10♦']);
-  const [gameStarted, setGameStarted] = useState(true);
-  const [mySocketId] = useState('player1');
-  const [showAllCards, setShowAllCards] = useState(false);
+  const [currentTurn, setCurrentTurn] = useState(null);
+  const [currentBet, setCurrentBet] = useState(0);
+  const [pot, setPot] = useState(0);
+  const [stage, setStage] = useState('waiting');
+  const [communityCards, setCommunityCards] = useState([]);
+  const [gameStarted, setGameStarted] = useState(false);
+  const [mySocketId, setMySocketId] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
   const [isRaising, setIsRaising] = useState(false);
   const [raiseAmount, setRaiseAmount] = useState('');
-  const [timeLeft, setTimeLeft] = useState(45);
-  const [log, setLog] = useState([
-    '🎮 Call (50) (שחקן 2)',
-    '🎮 Check (שחקן 1)',
-    '🃏 Flop: A♦ K♣ Q♠',
-    '🎬 משחק התחיל'
-  ]);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [log, setLog] = useState([]);
 
   const getVisibleCommunityCards = () => {
     if (stage === 'pre-flop') return [];
@@ -510,6 +486,7 @@ const PokerTable = () => {
   const isMyTurn = () => {
     return gameStarted && 
            players.length > 0 && 
+           currentTurn !== null &&
            currentTurn < players.length &&
            players[currentTurn] && 
            players[currentTurn].id === mySocketId &&
@@ -517,7 +494,7 @@ const PokerTable = () => {
   };
 
   const getCurrentPlayer = () => {
-    if (players.length === 0 || currentTurn >= players.length) return null;
+    if (players.length === 0 || currentTurn === null || currentTurn >= players.length) return null;
     return players[currentTurn];
   };
 
@@ -546,48 +523,17 @@ const PokerTable = () => {
     return myPlayer && myPlayer.chips > 0 && (currentBet === 0 || myPlayer.chips + myPlayer.currentBet > currentBet);
   };
 
+  // פונקציות לשליחת פעולות לשרת
   const handleAction = (action, amount = null) => {
-    console.log(`Action: ${action}`, amount);
-    
-    // סימולציה של פעולה - עדכון הסטייטים
-    const myPlayer = getMyPlayer();
-    if (!myPlayer) return;
-
-    const newPlayers = [...players];
-    const myPlayerIndex = newPlayers.findIndex(p => p.id === mySocketId);
-    
-    if (action === 'Call') {
-      const callAmount = getCallAmount();
-      newPlayers[myPlayerIndex].currentBet += callAmount;
-      newPlayers[myPlayerIndex].chips -= callAmount;
-      setPot(prev => prev + callAmount);
-    } else if (action === 'Raise') {
-      const raiseTotal = amount || currentBet + 50;
-      const betDiff = raiseTotal - newPlayers[myPlayerIndex].currentBet;
-      newPlayers[myPlayerIndex].currentBet = raiseTotal;
-      newPlayers[myPlayerIndex].chips -= betDiff;
-      setPot(prev => prev + betDiff);
-      setCurrentBet(raiseTotal);
-    } else if (action === 'Fold') {
-      newPlayers[myPlayerIndex].folded = true;
-    }
-    
-    setPlayers(newPlayers);
-    
-    // מעבר לשחקן הבא
-    let nextTurn = (currentTurn + 1) % players.length;
-    while (nextTurn !== currentTurn && players[nextTurn]?.folded) {
-      nextTurn = (nextTurn + 1) % players.length;
-    }
-    setCurrentTurn(nextTurn);
-    
-    setLog(prev => [`🎮 ${action}${amount ? ` (${amount})` : ''} (${myPlayer.name})`, ...prev]);
+    console.log(`Sending action: ${action}`, amount);
+    // כאן תשלח את הפעולה לשרת WebSocket
+    // socket.emit('playerAction', { action, amount });
   };
 
   const handleRaise = () => {
     if (!isRaising) {
       setIsRaising(true);
-      setRaiseAmount(String(currentBet + 50));
+      setRaiseAmount(String(currentBet + 1));
     } else {
       confirmRaise();
     }
@@ -604,58 +550,75 @@ const PokerTable = () => {
     setRaiseAmount('');
   };
 
+  const startGame = () => {
+    // כאן תשלח בקשה לשרת להתחיל משחק
+    // socket.emit('startGame');
+    console.log('Starting game...');
+  };
+
   return (
     <div className="poker-table-container">
       <style>{styles}</style>
       
-      <h2 className="table-title">שולחן פוקר דמו</h2>
+      <h2 className="table-title">שולחן פוקר</h2>
       
       <div className="connection-status">
-        <span className="connected">🟢 מחובר</span>
+        <span className={isConnected ? 'connected' : 'disconnected'}>
+          {isConnected ? '🟢 מחובר' : '🔴 לא מחובר'}
+        </span>
       </div>
 
       <div className="poker-table">
-        {players.map((player, index) => {
-          const isMyPlayer = player.id === mySocketId;
-          const shouldShowCards = isMyPlayer || showAllCards;
-          
-          return (
-            <div 
-              key={player.id} 
-              className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}
-            >
-              <div className="avatar">🎭</div>
-              <div className="player-name">{player.name} {isMyPlayer ? '(אני)' : ''}</div>
-              <div className="player-hand">
-                {player.hand && player.hand.length > 0 ? (
-                  player.hand.map((card, i) => (
-                    <Card 
-                      key={i} 
-                      card={card} 
-                      hidden={!shouldShowCards}
-                      size="small"
-                    />
-                  ))
-                ) : (
-                  gameStarted && <span className="no-cards">אין קלפים</span>
+        {players.length === 0 ? (
+          <div className="no-players">
+            <div>ממתין לשחקנים...</div>
+            <div style={{fontSize: '0.8em', marginTop: '10px'}}>
+              חיבור לשרת נדרש
+            </div>
+          </div>
+        ) : (
+          players.map((player, index) => {
+            const isMyPlayer = player.id === mySocketId;
+            const shouldShowCards = isMyPlayer;
+            
+            return (
+              <div 
+                key={player.id} 
+                className={`player-seat seat-${index} ${index === currentTurn ? 'active-seat' : ''} ${player.folded ? 'folded-seat' : ''}`}
+              >
+                <div className="avatar">🎭</div>
+                <div className="player-name">{player.name} {isMyPlayer ? '(אני)' : ''}</div>
+                <div className="player-hand">
+                  {player.hand && player.hand.length > 0 ? (
+                    player.hand.map((card, i) => (
+                      <Card 
+                        key={i} 
+                        card={card} 
+                        hidden={!shouldShowCards}
+                        size="small"
+                      />
+                    ))
+                  ) : (
+                    gameStarted && <span className="no-cards">אין קלפים</span>
+                  )}
+                </div>
+                <div className="player-chips">💵 {player.chips || 0}</div>
+                <div className="player-bet">💸 {player.currentBet || 0}</div>
+                {index === currentTurn && !player.folded && gameStarted && (
+                  <>
+                    <div className="turn-indicator">🎯</div>
+                    {isMyTurn() && timeLeft && (
+                      <div className="timer">⏱️ {timeLeft}s</div>
+                    )}
+                  </>
+                )}
+                {index === dealerIndex && (
+                  <div className="dealer-button">D</div>
                 )}
               </div>
-              <div className="player-chips">💵 {player.chips}</div>
-              <div className="player-bet">💸 {player.currentBet}</div>
-              {index === currentTurn && !player.folded && gameStarted && (
-                <>
-                  <div className="turn-indicator">🎯</div>
-                  {isMyTurn() && (
-                    <div className="timer">⏱️ {timeLeft}s</div>
-                  )}
-                </>
-              )}
-              {index === dealerIndex && (
-                <div className="dealer-button">D</div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })
+        )}
         
         <div className="community-cards">
           <h4>קלפי השולחן ({stage}):</h4>
@@ -666,7 +629,8 @@ const PokerTable = () => {
               ))
             ) : (
               <div className="no-community-cards">
-                {stage === 'pre-flop' ? 'ממתין לפלופ...' : 'אין קלפי קהילה'}
+                {stage === 'pre-flop' ? 'ממתין לפלופ...' : 
+                 stage === 'waiting' ? 'ממתין להתחלת משחק...' : 'אין קלפי קהילה'}
               </div>
             )}
           </div>
@@ -686,7 +650,7 @@ const PokerTable = () => {
           </div>
         )}
         
-        {gameStarted && !getMyPlayer()?.folded && (
+        {gameStarted && getMyPlayer() && !getMyPlayer().folded && (
           <div className="actions">
             <button 
               onClick={() => handleAction('Check')}
@@ -727,17 +691,19 @@ const PokerTable = () => {
           </div>
         )}
 
+        {!gameStarted && players.length > 1 && (
+          <div className="start-game-button">
+            <button onClick={startGame}>
+              🎮 התחל משחק
+            </button>
+          </div>
+        )}
+
         {getMyPlayer()?.folded && (
           <div style={{color: 'white', textAlign: 'center', padding: '20px'}}>
             ❌ פרשת מהיד - חכה לסיבוב הבא
           </div>
         )}
-      </div>
-
-      <div className="start-game-button">
-        <button onClick={() => setShowAllCards(prev => !prev)}>
-          {showAllCards ? '🙈 הסתר קלפים של כולם' : '👀 הצג קלפים של כולם'}
-        </button>
       </div>
 
       {isRaising && (
@@ -771,14 +737,16 @@ const PokerTable = () => {
         </div>
       )}
 
-      <div className="action-log">
-        <h4>יומן פעולות:</h4>
-        <ul>
-          {log.map((entry, i) => (
-            <li key={i}>{entry}</li>
-          ))}
-        </ul>
-      </div>
+      {log.length > 0 && (
+        <div className="action-log">
+          <h4>יומן פעולות:</h4>
+          <ul>
+            {log.map((entry, i) => (
+              <li key={i}>{entry}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 };
