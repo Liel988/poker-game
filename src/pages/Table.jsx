@@ -97,9 +97,11 @@ function Table() {
             setLog(tableData.log || []);
             setCurrentTurn(tableData.currentTurn);
             setCommunityCards(tableData.communityCards || []);
-        });
-        socket.current.on('player-joined', (playerId) => {
-            console.log('שחקן התחבר לשולחן:', playerId);
+        
+            const isAlreadySeated = tableData.players.some(p => p.id === socket.current.id);
+            if (!isAlreadySeated) {
+                socket.current.emit('join-table', tableId);
+            }
         });
 
         socket.current.on('action-update', (data) => {
@@ -266,8 +268,9 @@ function Table() {
             setLog(prev => [`${player.name} פרש ❌`, ...prev]);
         } else if (action === 'Call') {
             const toCall = currentBet - player.currentBet;
-            player.chips -= toCall;
-            player.currentBet += toCall;
+            const callAmount = Math.min(toCall, player.chips);
+            player.chips -= callAmount;
+            player.currentBet += callAmount;
             setPot(prev => prev + toCall);
             setLog(prev => [`${player.name} השווה ${toCall} ₪`, ...prev]);
         } else if (action === 'Raise') {
@@ -303,9 +306,9 @@ function Table() {
             return;
         }
 
-        const toCall = amount - player.currentBet;
-        player.chips -= toCall;
+        const toCall = Math.min(amount - player.currentBet, player.chips);
         player.currentBet += toCall;
+        player.chips -= toCall;
         setCurrentBet(amount);
         setPot(prev => prev + toCall);
         setPlayers(updated);
